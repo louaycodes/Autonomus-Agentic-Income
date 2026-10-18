@@ -1,0 +1,38 @@
+services:
+  income-cluster:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: autonomous-agentic-income
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - SIMULATION_MODE=${SIMULATION_MODE:-true}
+      - ENVIRONMENT=production
+      - DATA_DIR=/app/data
+      - DB_NAME=cluster.db
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - MASTER_API_KEY=${MASTER_API_KEY:-cluster_master_secret_key_change_me}
+      - RAPIDAPI_PROXY_SECRET=${RAPIDAPI_PROXY_SECRET:-}
+      - SCOUT_INTERVAL_SECONDS=${SCOUT_INTERVAL_SECONDS:-3600}
+      - ARBITRAGE_POLL_INTERVAL=${ARBITRAGE_POLL_INTERVAL:-30}
+      - MIN_SPREAD_THRESHOLD=${MIN_SPREAD_THRESHOLD:-0.08}
+      - MAX_TRADE_ALLOCATION_USD=${MAX_TRADE_ALLOCATION_USD:-20.0}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - SENTINEL_CHECK_INTERVAL=60
+      - DAILY_REPORT_HOUR_UTC=23
+    volumes:
+      - ./data:/app/data
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1024M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
