@@ -1,17 +1,17 @@
-# 🚀 Autonomous Agentic Income Cluster (VPS 24/7)
+# ⚡ Apex Autonomous Quantitative Spot Grid Trading Agent (VPS 24/7)
 
 [![Tests](https://img.shields.io/badge/Tests-100%25%20Passing-brightgreen)](#)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue)](#)
-[![Method](https://img.shields.io/badge/BMad-Engineered-purple)](#)
-[![Target](https://img.shields.io/badge/Target-10%2B%20USD%2Fday-emerald)](#)
+[![Capital](https://img.shields.io/badge/Capital-100%24%20Spot-yellow)](#)
+[![Leverage](https://img.shields.io/badge/Liquidation%20Risk-0.00%25-emerald)](#)
 
-> **Un cluster d'agents logiciels 100 % autonome, conçu pour tourner 24h/24 et 7j/7 sur votre VPS Linux sous Docker, combinant deux moteurs de revenus indépendants pour atteindre et dépasser 10 $ nets par jour.**
+> **Agent de trading quantitatif 100 % autonome sur VPS Linux, conçu pour générer des micro-profits quotidiens récurrents (objectif 10 $/jour) à partir d'un capital de 100 $, sans effet de levier et sans risque de liquidation.**
 
 ---
 
-## 🏛️ Architecture Dual-Engine
+## 🏛️ Stratégie & Architecture Quantitative
 
-Le système élimine tout risque de ruine financière en découplant totalement deux sources de revenus :
+L'agent **Apex** reproduit la formule gagnante des meilleurs systèmes de trading quantitatif de marché (Pionex Grid, Freqtrade, Hummingbot) :
 
 ```
                         ┌────────────────────────────────────────┐
@@ -21,97 +21,73 @@ Le système élimine tout risque de ruine financière en découplant totalement 
         ┌───────────────────────────────────┴───────────────────────────────────┐
         ▼                                                                       ▼
 ┌──────────────────────────────┐                                ┌──────────────────────────────┐
-│  Moteur A : Micro-API B2B    │                                │  Moteur B : Arbitrage Fast   │
-│  (Cashflow Récurrent $0 Risque)                               │  (Polymarket Event Spreads)  │
+│  Moteur Spot Grid Géométrique│                                │    Trend Guard Anti-Crash    │
 ├──────────────────────────────┤                                ├──────────────────────────────┤
-│ • Agent Scout (Veille RFPs)  │                                │ • Écoute dépêches officielles│
-│ • Agent Transformer ($0 LLM) │                                │ • Détection écart cote >= 8% │
-│ • Gateway FastAPI + Auth     │                                │ • Arbitrage garanti (Max $20)│
-│ • Monétisation RapidAPI/Whop │                                │ • Exécution Polygon CLOB     │
+│ • Échelle d'ordres Achat/Vente│                               │ • EMA 50 / 200 + RSI 14      │
+│ • Espacement 1.2% par niveau │                                │ • Blocage auto si krach brut │
+│ • Recyclage continu 24/7     │                                │ • Protection du capital      │
 └──────────────┬───────────────┘                                └──────────────┬───────────────┘
                │                                                               │
                └───────────────────────────────┬───────────────────────────────┘
                                                │
                                                ▼
                                 ┌──────────────────────────────┐
-                                │       Core Supervisor        │
+                                │   Terminal Telegram Interactif│
                                 ├──────────────────────────────┤
-                                │ • SQLite WAL Persistent DB   │
-                                │ • Sentinel Watchdog 24/7     │
-                                │ • Ledger & Bilan Telegram    │
+                                │ • Alertes de gains en direct │
+                                │ • Commandes /status /profit  │
+                                │ • Rapport de clôture à 23h59 │
                                 └──────────────────────────────┘
 ```
 
-1. **Moteur A — B2B Digital Utility & Micro-API (Cashflow Récurrent) :**  
-   Agrège et nettoie des flux d'opportunités d'affaires (appels d'offres publics, subventions, conformité tech) et les expose via une API REST sécurisée. Chaque requête ou abonnement mensuel (RapidAPI, Whop, direct) génère du cashflow direct.
-2. **Moteur B — Fast Prediction Market Arbitrage (Gains Vélocité) :**  
-   Détecte instantanément les événements confirmés dans les dépêches de presse certifiées dont la cote sur Polymarket n'est pas encore réajustée (spread >= 8 %). Passe des ordres sans levier plafonnés à 20 $ pour un rachat automatique à 1.00 $.
-3. **Core Sentinel (Le Gardien 24/7) :**  
-   Supervise la santé du serveur, garantit le redémarrage automatique en conteneur Docker et envoie chaque soir à 23h59 UTC votre rapport financier sur Telegram.
+1. **Spot Grid Trading Géométrique (Micro-Arbitrage d'Oscillation) :**  
+   Les marchés crypto oscillent 70 % du temps dans des canaux de prix. Le bot fractionne vos 100 $ en micro-ordres échelonnés et achète chaque creux pour revendre chaque rebond avec 1.2 % de marge nette.
+2. **Trend Guard Anti-Couteau qui tombe :**  
+   Si le marché subit une vente massive anormale (RSI < 28 et cassure sous l'EMA 200), le bot bloque immédiatement les nouveaux achats pour préserver vos liquidités jusqu'à stabilisation.
+3. **Persistance SQLite WAL & Tolérance aux Reboot :**  
+   Chaque ordre, transaction et état est gravé sur disque. Si le VPS reboot, l'agent reprend sans perdre un seul centime.
+4. **Terminal Telegram Interactif :**  
+   Recevez une notification à chaque gain et pilotez le bot depuis votre smartphone.
 
 ---
 
-## ⚡ Démarrage Rapide en 1 Commande (Sur votre VPS)
+## 📱 Commandes Telegram Disponibles (@Bashkoubot)
 
-### 1. Cloner et configurer
+Vous pouvez envoyer ces messages directement à votre bot sur Telegram :
+
+| Commande | Action |
+|---|---|
+| `/status` | Affiche le prix actuel, l'état du bot et les ordres de grille en cours |
+| `/balance` | Affiche vos soldes disponibles (USDT et Crypto) et valeur totale |
+| `/profit` | Affiche le P&L net encaissé aujourd'hui et le cumul historique |
+| `/pause` | Met temporairement la stratégie en pause (aucun nouvel ordre) |
+| `/resume` | Relance la stratégie et l'écoute de marché |
+| `/help` | Affiche la liste des commandes |
+
+---
+
+## ⚡ Démarrage Rapide (En 1 Commande sur votre VPS)
+
+Le projet est déjà pré-configuré et déployé sur votre VPS. Pour le relancer ou le vérifier à tout moment :
+
 ```bash
-git clone https://github.com/louaycodes/Autonomus-Agentic-Income.git
+# Se connecter au VPS
+ssh vps
+
+# Aller dans le dossier et lancer
 cd Autonomus-Agentic-Income
-
-# Créer votre fichier de configuration
-cp .env.example .env
-```
-
-*(Éditez `.env` pour insérer votre token Telegram et votre clé secrète).*
-
-### 2. Lancer le cluster en arrière-plan
-```bash
 docker compose up -d --build
-```
 
-### 3. Vérifier que tout tourne
-```bash
-# Voir les logs en direct
+# Voir les logs de trading en direct
 docker compose logs -f
-
-# Tester la santé de l'API
-curl http://localhost:8000/health
-
-# Voir les métriques et profits en temps réel
-curl http://localhost:8000/api/v1/metrics
 ```
 
 ---
 
-## 🧪 Validation & Tests Automatisés
-
-Le cluster est entièrement testé (100 % de couverture fonctionnelle) :
+## 🧪 Tests Unitaires Automatisés
 
 ```bash
-# Activer l'environnement
 source .venv/bin/activate
-
-# Lancer la suite de tests unitaires et d'intégration
 PYTHONPATH=. pytest -v
 ```
-
----
-
-## 📊 Endpoints de l'API Monétisée (Moteur A)
-
-La documentation Swagger interactive est accessible directement sur : `http://VOTRE_VPS_IP:8000/docs`
-
-* `GET /health` : Statut opérationnel du cluster.
-* `GET /api/v1/metrics` : Bilan financier complet (gains Moteur A, Moteur B, nombre de trades et requêtes).
-* `GET /api/v1/opportunities` : Flux d'opportunités B2B qualifiées (authentifié via header `X-API-Key`).
-* `POST /api/v1/keys/generate` : Création de clés d'accès client (protégé par `X-Master-Key`).
-
----
-
-## 📁 Livrables Méthode BMad Inclus
-
-* **Brief Produit :** `_bmad-output/planning-artifacts/product-brief/brief.md`
-* **Cahier des Charges (PRD) :** `_bmad-output/planning-artifacts/prd/prd.md`
-* **Architecture Technique :** `_bmad-output/planning-artifacts/architecture/ARCHITECTURE-SPINE.md`
-* **Epics & User Stories :** `_bmad-output/planning-artifacts/epics/epics-and-stories.md`
-* **Keepsake Brainstorming Interactif :** `_bmad-output/brainstorming/brainstorm-autonomous-vps-agent-cluster-passive-income-2026-10-18/brainstorm.html`
+*(10 tests unitaires passants à 100 % : indicateurs EMA/RSI, logique de grille, persistance WAL et commandes Telegram).*

@@ -1,5 +1,5 @@
 ---
-title: "Epics and User Stories — Dual-Engine Autonomous Income Cluster"
+title: "Epics and User Stories — Apex Quantitative Trading Agent"
 status: "approved"
 created: "2026-10-18"
 updated: "2026-10-18"
@@ -7,86 +7,70 @@ author: "Scrum Lead (BMad Method)"
 project: "Autonomus-Agentic-Income"
 ---
 
-# Epics and User Stories — Dual-Engine Autonomous Income Cluster
+# Epics and User Stories — Apex Quantitative Trading Agent
 
-## Epic 1 : Core Supervisor, Persistent Storage & Financial Ledger
-Fournir le socle de survie et de reddition de comptes du cluster sur VPS Linux.
+## Epic 1 : Quantitative Core, Config & SQLite WAL Persistence
+Fournir la fondation de stockage et de réconciliation d'état en cas de redémarrage.
 
-### Story 1.1 : SQLite WAL & Financial Ledger Engine
-* **En tant que :** Système autonome,
-* **Je veux :** Une couche de données persistante SQLite configurée en mode WAL avec gestion des transactions atomiques et traçabilité financière,
-* **Afin de :** Consigner chaque requête API servie, chaque arbitrage simulé/réel et calculer les profits nets sans concurrence de verrouillage.
+### Story 1.1 : SQLite WAL Database & State Reconciliation
 * **Critères d'Acceptation :**
-  - [x] Initialisation automatique des tables : `api_keys`, `api_requests`, `arbitrage_events`, `daily_ledger`.
-  - [x] Activation de `PRAGMA journal_mode=WAL;` et `PRAGMA busy_timeout=5000;`.
-  - [x] Méthode pour enregistrer les revenus journaliers et générer le bilan net.
+  - Tables `grid_orders`, `completed_trades`, `daily_pnl`, `bot_state`.
+  - Mode `PRAGMA journal_mode=WAL;` activé.
+  - Fonction de réconciliation au boot pour restaurer les ordres ouverts et l'inventaire.
 
-### Story 1.2 : Sentinel Supervisor & Telegram Alerting
-* **En tant que :** Propriétaire (Louay),
-* **Je veux :** Un module de supervision 24/7 qui teste la santé des agents et m'envoie chaque soir un récapitulatif sur Telegram (ou alerte immédiate en cas d'erreur bloquante),
-* **Afin de :** Suivre mes revenus et savoir que le système tourne sans devoir me connecter au terminal SSH du VPS.
+### Story 1.2 : Configuration Module
 * **Critères d'Acceptation :**
-  - [x] Boucle de contrôle de santé périodique (RAM, disque, connectivité).
-  - [x] Formatage du rapport quotidien : Requêtes servies, Gains Moteur A, Gains Moteur B, Profit total USD, Uptime.
-  - [x] Mode fallback silencieux / log local si Telegram n'est pas configuré.
+  - Chargement de `SYMBOL` (défaut: `SOL/USDT`), `TOTAL_CAPITAL_USD` (100.0), `GRID_LEVELS` (10), `GRID_STEP_PERCENT` (1.2%), `TRADING_MODE` (`paper` ou `live`).
 
 ---
 
-## Epic 2 : Engine A — B2B Data Utility & Monétisation Micro-API
-Mettre en place le moteur de cashflow récurrent sans risque financier.
+## Epic 2 : Spot Grid Trading Engine, Trend Guard & Execution Router
+L'intelligence quantitative qui extrait les micro-profits du marché 24/7.
 
-### Story 2.1 : Scout & Transformer — Ingestion de Données d'Opportunités B2B
-* **En tant que :** Développeur / Client B2B,
-* **Je veux :** Un pipeline qui extrait et normalise des opportunités d'affaires (appels d'offres publics, subventions, listings tech qualifiés),
-* **Afin d' :** Obtenir des données fraîches et enrichies prêtes à l'emploi.
+### Story 2.1 : Market Feeder & Trend Guard
 * **Critères d'Acceptation :**
-  - [x] Collecteur asynchrone pour sources publiques ouvertes (BOAMP, TED, registres ouverts).
-  - [x] Nettoyeur déterministe en Python pur ($0 de coût API LLM).
-  - [x] Stockage dédupliqué en base SQLite avec horodatage et index de recherche.
+  - Récupération asynchrone du ticker et des bougies via CCXT.
+  - Calcul des indicateurs EMA 50, EMA 200 et RSI 14.
+  - Blocage des ordres d'achat en cas de signal de panique/krach.
 
-### Story 2.2 : Gateway REST FastAPI Monétisée (Compatible RapidAPI / Whop)
-* **En tant que :** Client consommateur d'API,
-* **Je veux :** Interroger des endpoints `/api/v1/opportunities` et `/api/v1/market-signals` protégés par clé d'API,
-* **Afin de :** Payer pour consommer de la donnée stratégique.
+### Story 2.2 : Spot Grid Generator & Order Recycling
 * **Critères d'Acceptation :**
-  - [x] FastAPI avec support des headers `X-API-Key` et `X-RapidAPI-Proxy-Secret`.
-  - [x] Rate limiting intégré par clé (ex: 10 req/min sur tier gratuit, illimité sur tier pro).
-  - [x] Documentation OpenAPI (/docs) auto-générée avec exemples réels.
+  - Calcul des paliers géométriques autour du prix actuel.
+  - Placement des ordres d'achat et de vente associés.
+  - Dès qu'un ordre d'achat est rempli, création automatique de l'ordre de vente au niveau supérieur avec marge garantie.
+
+### Story 2.3 : Hybrid Execution Router (Paper vs Live)
+* **Critères d'Acceptation :**
+  - En mode `paper` : simulation réaliste des fills selon le carnet d'ordres live.
+  - En mode `live` : envoi des ordres réels via l'exchange CCXT configuré.
 
 ---
 
-## Epic 3 : Engine B — Polymarket Fast Event Arbitrage (Vélocité)
-Capter des profits asymétriques sur les marchés de prédiction lors de confirmations d'actualités.
+## Epic 3 : Telegram Command Terminal & Instant Trade Alerts
+Permettre à Louay de suivre ses gains et de piloter son agent depuis son smartphone sans toucher à un terminal SSH.
 
-### Story 3.1 : Real-Time News Monitor & Matcher Polymarket
-* **En tant que :** Moteur d'arbitrage,
-* **Je veux :** Surveiller les flux d'actualités officielles en temps réel et les croiser avec le carnet d'ordres Polymarket,
-* **Afin d' :** Identifier les retards de cotation sur des événements résolus.
+### Story 3.1 : Instant Profit Alerts
 * **Critères d'Acceptation :**
-  - [x] Écoute des flux RSS/Websocket de dépêches d'actualités.
-  - [x] Comparaison sémantique et calcul de l'écart (spread >= 8 %).
-  - [x] Respect de la limite de risque (max 20 $ par ordre).
+  - Notification Telegram instantanée dès qu'une vente de grille est complétée avec le gain net en dollars et le pourcentage.
 
-### Story 3.2 : Dual Execution Engine (Simulation & Live Polygon)
-* **En tant que :** Opérateur,
-* **Je veux :** Que le moteur d'arbitrage fonctionne en mode simulation sécurisée (`SIMULATION_MODE=true`) avant tout passage en live,
-* **Afin de :** Valider les gains virtuels et la précision des signaux sans engager de capital réel prématurément.
+### Story 3.2 : Interactive Commands Listener
 * **Critères d'Acceptation :**
-  - [x] Simulation de carnet d'ordres avec calcul de slippage théorique et gaz.
-  - [x] Module de signature Web3 pour transition transparente vers le live.
+  - Écoute en arrière-plan des messages Telegram venant de `TELEGRAM_CHAT_ID`.
+  - Réponses immédiates aux commandes `/status`, `/balance`, `/profit`, `/pause`, `/resume`, `/help`.
+
+### Story 3.3 : Daily Midnight P&L Ledger Report
+* **Critères d'Acceptation :**
+  - Bilan comptable automatique envoyé à 23h59 UTC avec les gains nets générés au cours des 24 dernières heures.
 
 ---
 
-## Epic 4 : Validation, Tests & Déploiement VPS Docker
-Assembler le code de production, les tests unitaires et le package de déploiement en 1 commande.
+## Epic 4 : Validation, Tests & Déploiement VPS
+Validation complète et mise en production immédiate sur le VPS.
 
-### Story 4.1 : Suite de Tests Unitaires & Intégration
+### Story 4.1 : Test Suite Complète
 * **Critères d'Acceptation :**
-  - [x] Couverture des flux SQLite WAL, du Gateway FastAPI, du Matcher d'arbitrage et du Watchdog.
-  - [x] 100 % de tests passants via `pytest`.
+  - 100 % des tests unitaires passants via `pytest`.
 
-### Story 4.2 : Dockerfile, Docker Compose & Guide de Déploiement VPS
+### Story 4.2 : Packaging Dockerfile, Compose & Déploiement Live sur VPS
 * **Critères d'Acceptation :**
-  - [x] Dockerfile multi-stage allégé en Alpine/Debian-slim (< 200 Mo).
-  - [x] docker-compose.yml avec redémarrage automatique `always`, volume persistant et isolation réseau.
-  - [x] Fichier `.env.example` prêt à l'emploi.
+  - Conteneur Docker opérationnel, démarré sur le VPS `84.247.129.48` avec la commande `docker compose up -d`.

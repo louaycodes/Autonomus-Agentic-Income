@@ -1,87 +1,73 @@
 ---
-title: "Architecture Spine — Dual-Engine Autonomous Income Cluster"
+title: "Architecture Spine — Apex Quantitative Trading Agent"
 status: "final"
 created: "2026-10-18"
 updated: "2026-10-18"
 author: "Winston (BMad System Architect)"
 project: "Autonomus-Agentic-Income"
-paradigm: "Modular Asynchronous Micro-Services with Shared Local Storage & Event-Driven Gateway"
+paradigm: "Asynchronous Event-Driven Quantitative Engine with SQLite WAL & Telegram Terminal"
 ---
 
-# Architecture Spine — Dual-Engine Autonomous Income Cluster
+# Architecture Spine — Apex Quantitative Trading Agent
 
-## 1. System Topology & Paradigm
-
-Le système s'articule autour d'un paradigme **Event-Driven & Asynchronous Service Gateway**, conteneurisé sous Docker Compose, optimisé pour une exécution continue 24/7 sur un VPS Linux à ressources modérées (2-4 vCPU, 4 Go RAM).
+## 1. Topologie & Diagramme du Système
 
 ```mermaid
 graph TD
-    subgraph Host["VPS Linux 24/7 (Docker Network)"]
-        subgraph EngineA["Engine A : B2B Data Utility"]
-            Scout["Scout Agent\nAsync Scraper & Ingestion"]
-            Transformer["Transformer Agent\nDeterministic Parser & Enricher"]
-            Gateway["Gateway Agent\nFastAPI REST + Rate Limiter"]
+    subgraph Host["VPS Linux 24/7 (Docker Runtime)"]
+        subgraph Engine["Apex Quant Core Engine"]
+            MarketFeeder["Market Feeder (CCXT Async)\nLive Ticker & Orderbook"]
+            Strategy["Spot Grid & Trend Guard\nEMA 50/200 + RSI + Grid Rebalancer"]
+            OrderRouter["Order Router\nPaper Simulator OR Live Exchange"]
         end
 
-        subgraph EngineB["Engine B : Prediction Fast Arbitrage"]
-            NewsFeed["NewsFeed Listener\nRSS/Websocket Real-Time Monitor"]
-            ArbitrageEngine["Arbitrage Decision Engine\nPolymarket CLOB Matcher"]
-            Executor["Polygon Executor\nNon-custodial TX Signer"]
+        subgraph Storage["Persistence Layer"]
+            DB[(SQLite WAL Mode\nGrid Levels, Trades & Ledger)]
         end
 
-        subgraph Core["Core Supervisor & Storage"]
-            DB[(Local SQLite / WAL mode\nPersistent Volume)]
-            Sentinel["Sentinel Watchdog\nHeartbeat, Memory & Health"]
-            Notifier["Telegram Notifier\nAlerts & Daily Ledger"]
+        subgraph Interface["Control & Observability"]
+            Bot["Telegram Bot Controller\nCommands Listener & Trade Alerts"]
+            Sentinel["Sentinel Health Watchdog\nHeartbeat & P&L Summarizer"]
         end
     end
 
-    Scout --> Transformer --> DB
-    DB --> Gateway --> RapidAPI["RapidAPI / Public Clients ($)"]
-    NewsFeed --> ArbitrageEngine
-    DB -. Market Cache .- ArbitrageEngine
-    ArbitrageEngine --> Executor --> Polymarket["Polymarket Contract / Polygon ($)"]
-    Sentinel --> Scout
-    Sentinel --> Gateway
-    Sentinel --> ArbitrageEngine
-    Sentinel --> Notifier --> Owner["Louay (Telegram / Daily Report)"]
+    MarketFeeder --> Strategy
+    Strategy --> OrderRouter
+    OrderRouter --> DB
+    DB --> Strategy
+    OrderRouter --> Bot
+    Bot --> Louay["Louay (@Bashkoubot Telegram)"]
+    Louay --> Bot
+    Sentinel --> Bot
 ```
 
 ---
 
-## 2. Architecture Invariants & Decisions (AD)
+## 2. Invariants d'Architecture (AD)
 
-### AD-1 : Stockage Local Embarqué (SQLite en mode WAL)
-* **Binds :** Tous les agents partagent une base locale SQLite montée sur un volume persistant Docker.
-* **Prevents :** Évite la dépendance et la surcharge d'un cluster PostgreSQL ou Redis lourd, consommant inutilement 1 Go de RAM.
-* **Rule :** La base doit impérativement être configurée avec `PRAGMA journal_mode=WAL;` et `PRAGMA busy_timeout=5000;` pour supporter des écritures concurrentes et des lectures instantanées non-bloquantes.
+### AD-1 : Moteur Asynchrone Haute Fréquence Non-Bloquant
+* **Binds :** Tout le code utilise `asyncio` natif. Toutes les entrées/sorties réseau (CCXT, Telegram, base SQLite) sont non-bloquantes.
+* **Prevents :** Évite que la vérification d'un ordre bloque l'écoute des commandes Telegram ou la surveillance des prix.
+* **Rule :** Aucune opération synchrone `time.sleep()` ou appel HTTP bloquant n'est autorisé dans la boucle d'événements.
 
-### AD-2 : Isolation Déterministe vs LLM ($0 Marginal Cost)
-* **Binds :** Ingestion, parsing, regex, validation de schéma et calculs mathématiques d'arbitrage sont 100 % déterministes en Python natif.
-* **Prevents :** Élimine tout risque d'explosion de facture API LLM ou de blocage si une clé LLM expire.
-* **Rule :** Un appel LLM (Gemini Flash ou Groq gratuit) n'est autorisé QUE pour la catégorisation sémantique ambiguë ou la détection de sentiment complexe, avec un cache LRU persistant.
+### AD-2 : Base de Données Embarquée SQLite WAL Mode
+* **Binds :** Toutes les positions de grille, transactions et ordres sont écrits immédiatement dans `data/trading.db` avec `PRAGMA journal_mode=WAL;`.
+* **Prevents :** Corruption de données en cas de redémarrage inopiné du VPS ou de coupure de courant.
+* **Rule :** Au démarrage, le module `Reconciler` lit la base et restaure l'état exact des ordres avant de relancer les boucles.
 
-### AD-3 : Sécurité Non-Custodial et Plafonnement Strict de Trésorerie
-* **Binds :** Le module d'arbitrage Polymarket (Engine B) opère directement via une clé privée Polygon dérivée d'un sous-compte dédié à faible allocation (ex: 50 $ - 100 $ max).
-* **Prevents :** Aucun risque de perte de capital supérieur à l'enveloppe allouée ; pas d'effet de levier ; zéro risque de liquidation.
-* **Rule :** Chaque ordre d'arbitrage est plafonné à 20 $ maximum par marché. L'ordre n'est passé que si le spread garantit au minimum un gain net supérieur aux frais de gaz Polygon.
+### AD-3 : Exécution Hybride CCXT (Live Real-Money vs Live-Ticker Paper Trading)
+* **Binds :** Le système supporte nativement deux modes d'exécution interchangeables via la variable `TRADING_MODE` (`paper` ou `live`) :
+  - En mode `paper`, le bot interroge les vrais prix réels en direct de l'exchange (ex: Binance ou Bybit), simule les remplissages de carnet avec slippage et frais, et accumule de vrais métriques de P&L.
+  - En mode `live`, le bot utilise les clés API réelles (`EXCHANGE_API_KEY`, `EXCHANGE_API_SECRET`) via CCXT pour placer de vrais ordres sur le marché Spot.
+* **Prevents :** Impossibilité de tester sans risquer du capital immédiatement.
+* **Rule :** Même logique stratégique stricte dans les deux modes, permettant une transition transparente.
 
-### AD-4 : Modularité des Composants & Couplage Faible
-* **Binds :** Chaque moteur (Engine A, Engine B, Sentinel) s'exécute dans un conteneur ou un module Python asynchrone découplé.
-* **Prevents :** Si le scraper de l'Engine A rencontre un timeout ou un changement de structure HTML, l'API Gateway et l'Engine B continuent de fonctionner sans interruption.
-* **Rule :** Toutes les boucles d'ingestion utilisent des timeouts stricts (max 10s) et un mécanisme d'exponentiel backoff avec jitter.
+### AD-4 : Terminal de Contrôle Telegram Bidirectionnel
+* **Binds :** L'agent fait tourner un long-polling Telegram asynchrone intégré.
+* **Prevents :** Nécessité d'ouvrir une session SSH sur le VPS pour vérifier l'état ou le profit du bot.
+* **Rule :** L'agent écoute les messages venant uniquement de `TELEGRAM_CHAT_ID` (sécurité totale) et répond en quelques millisecondes aux commandes `/status`, `/balance`, `/profit`, `/pause`, `/resume`.
 
-### AD-5 : Mode Simulation / Dry-Run Natif
-* **Binds :** L'intégralité du cluster supporte la variable d'environnement globale `SIMULATION_MODE=true`.
-* **Prevents :** Permet de déployer et de valider à blanc tous les connecteurs, flux d'actualités et calculs de rentabilité sans dépenser le moindre centime réel.
-* **Rule :** En mode simulation, les ordres Polymarket et les facturations API sont simulés dans le ledger local, générant les mêmes rapports Telegram journaliers.
-
-### AD-6 : Interface d'Exposition API REST Standardisée
-* **Binds :** L'Engine A expose une API FastAPI compatible avec les spécifications OpenAPI v3 et les proxys de facturation comme RapidAPI (`X-RapidAPI-Proxy-Secret`) ou direct `X-API-Key`.
-* **Prevents :** Incompatibilité avec les places de marché de micro-services B2B.
-* **Rule :** Les réponses sont systématiquement en JSON structuré avec temps de réponse < 50ms sur le cache chaud.
-
-### AD-7 : Surveillance Sentinelle & Redémarrage Automatique
-* **Binds :** Docker Compose orchestre les conteneurs avec `restart: always` et healthcheck périodique.
-* **Prevents :** Mort silencieuse du cluster suite à un redémarrage impromptu du VPS ou une coupure réseau.
-* **Rule :** Le watchdog envoie un signal de vie quotidien sur Telegram à 23h59 UTC avec le cumul des gains et alerte immédiatement en cas d'erreur de niveau CRITICAL.
+### AD-5 : Protection du Capital par Grid Dynamic Reseeding
+* **Binds :** La grille calcule ses bornes supérieure et inférieure en fonction du prix d'entrée et de la volatilité moyenne (ATR).
+* **Prevents :** Blocage de la grille si le cours sort durablement d'un intervalle fixe.
+* **Rule :** Si le cours dépasse de plus de 10 % la borne haute, la grille se réajuste dynamiquement en sécurisant les profits déjà réalisés.
