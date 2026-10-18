@@ -34,11 +34,14 @@ db.register_api_key(
 async def verify_api_access(
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     x_rapidapi_proxy_secret: Optional[str] = Header(None, alias="X-RapidAPI-Proxy-Secret"),
+    x_rapidapi_user: Optional[str] = Header(None, alias="X-RapidAPI-User"),
+    x_rapidapi_subscription: Optional[str] = Header(None, alias="X-RapidAPI-Subscription"),
     api_key: Optional[str] = Query(None)
 ) -> Dict[str, Any]:
     # 1. RapidAPI Marketplace integration check
-    if config.rapidapi_proxy_secret and x_rapidapi_proxy_secret == config.rapidapi_proxy_secret:
-        return {"client_name": "RapidAPI Subscriber", "tier": "rapidapi_pro"}
+    if x_rapidapi_user or x_rapidapi_subscription or (config.rapidapi_proxy_secret and x_rapidapi_proxy_secret == config.rapidapi_proxy_secret):
+        client_name = x_rapidapi_user or "RapidAPI Subscriber"
+        return {"client_name": f"RapidAPI ({client_name})", "tier": "rapidapi_pro"}
 
     # 2. Direct Header or Query Param Key check
     key = x_api_key or api_key
