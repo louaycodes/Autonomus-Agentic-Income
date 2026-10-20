@@ -51,13 +51,15 @@ class TelegramController:
         profit_dt = profit_usd * dt_rate
         cap_dt = current_capital * dt_rate
         daily_dt = daily['net_profit_usd'] * dt_rate
+        buy_dt = trade['buy_price'] * dt_rate
+        sell_dt = trade['sell_price'] * dt_rate
 
         msg = (
             f"💰 *PROFIT ENCAISSÉ ET RÉINVESTI !*\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"🪙 *Actif :* `{sym}`\n"
             f"📈 *Gain Net :* *+{profit_usd:.4f} $* (~`+{profit_dt:.2f} DT`) | `+{trade['roi_percent']}%`\n"
-            f"🛒 *Achat :* `${trade['buy_price']:.2f}` ➔ 🏷️ *Vente :* `${trade['sell_price']:.2f}`\n\n"
+            f"🛒 *Achat :* `${trade['buy_price']:.2f}` (~`{buy_dt:.2f} DT`) ➔ 🏷️ *Vente :* `${trade['sell_price']:.2f}` (~`{sell_dt:.2f} DT`)\n\n"
             f"🏦 *Capital Actif :* *${current_capital:,.2f} USD* (~`{cap_dt:,.0f} DT`)\n"
             f"📊 *Gains Aujourd'hui :* *+{daily['net_profit_usd']:.2f} $* (~`+{daily_dt:.2f} DT`) ({daily['trades_count']} trades)"
         )
@@ -103,8 +105,8 @@ class TelegramController:
         if base_cmd in ["/start", "/help"]:
             return (
                 "🤖 *Commandes Apex Trading Agent :*\n\n"
-                "• `/balance` : Solde USDT libre, USDT engagé, cryptos et valeur totale\n"
-                "• `/status` : État général, capital, grilles et prix en direct\n"
+                "• `/balance` : Solde USDT libre, engagé, cryptos et valeur totale (USD & DT)\n"
+                "• `/status` : État général, capital, grilles et cours en direct (USD & DT)\n"
                 "• `/profit` : Bénéfices encaissés aujourd'hui et cumulés (USD & DT)\n"
                 "• `/setcapital <DT>` : Modifier le capital (ex: `/setcapital 30000`)\n"
                 "• `/reset` : Réinitialiser la base et recommencer les trades à 0\n"
@@ -125,9 +127,10 @@ class TelegramController:
             for sym in config.symbols:
                 try:
                     p = await self.exchange.fetch_current_price(sym)
-                    prices_lines.append(f"  • `{sym}`: ${p:,.2f}")
+                    p_dt = p * dt_rate
+                    prices_lines.append(f"  • `{sym}` : *${p:,.2f}* (~`{p_dt:,.2f} DT`)")
                 except Exception:
-                    prices_lines.append(f"  • `{sym}`: non joignable")
+                    prices_lines.append(f"  • `{sym}` : non joignable")
 
             return (
                 f"📊 *État du Bot Apex Multi-Actifs :*\n"
@@ -156,11 +159,12 @@ class TelegramController:
                 except Exception:
                     pass
                 val_usd = amount * price
+                val_dt = val_usd * dt_rate
                 total_crypto_usd += val_usd
                 if amount > 0:
-                    crypto_lines.append(f"• *{base} :* `{amount:,.4f}` (~${val_usd:,.2f})")
+                    crypto_lines.append(f"  • *{base} :* `{amount:,.4f}` (~*${val_usd:,.2f} USD* / ~`{val_dt:,.2f} DT`)")
                 else:
-                    crypto_lines.append(f"• *{base} :* `0.0000` ($0.00)")
+                    crypto_lines.append(f"  • *{base} :* `0.0000` ($0.00 USD / 0 DT)")
 
             total_portfolio_usd = usdt_free + usdt_locked + total_crypto_usd
             total_portfolio_dt = total_portfolio_usd * dt_rate
@@ -170,8 +174,8 @@ class TelegramController:
             return (
                 f"💼 *Portefeuille & Soldes :*\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"💵 *USDT Disponible :* *${usdt_free:,.2f}* (~`{usdt_free * dt_rate:,.0f} DT`)\n"
-                f"🔒 *USDT Engagé (Grilles) :* *${usdt_locked:,.2f}* (~`{usdt_locked * dt_rate:,.0f} DT`)\n"
+                f"💵 *USDT Disponible :* *${usdt_free:,.2f} USD* (~`{usdt_free * dt_rate:,.0f} DT`)\n"
+                f"🔒 *USDT Engagé (Grilles) :* *${usdt_locked:,.2f} USD* (~`{usdt_locked * dt_rate:,.0f} DT`)\n"
                 f"🪙 *Actifs Cryptos :*\n" + "\n".join(crypto_lines) + "\n\n"
                 f"💰 *Valeur Totale :* *${total_portfolio_usd:,.2f} USD* (~`{total_portfolio_dt:,.0f} DT`)\n"
                 f"🏦 *Capital Référent :* *${current_capital:,.2f} USD* (~`{cap_dt:,.0f} DT`)\n"
@@ -184,11 +188,12 @@ class TelegramController:
             all_time = self.db.get_all_time_stats()
             daily_dt = daily['net_profit_usd'] * dt_rate
             all_time_dt = all_time['total_profit_usd'] * dt_rate
+            vol_dt = daily['volume_usd'] * dt_rate
 
             return (
                 f"💰 *Performances Financières :*\n"
                 f"• *Gain Aujourd'hui :* *+{daily['net_profit_usd']:.2f} $* (~`+{daily_dt:.2f} DT`) ({daily['trades_count']} trades)\n"
-                f"• *Volume 24h :* `${daily['volume_usd']:,.2f}`\n"
+                f"• *Volume 24h :* *${daily['volume_usd']:,.2f} USD* (~`{vol_dt:,.2f} DT`)\n"
                 f"• *Gain Total Cumulé :* *+{all_time['total_profit_usd']:.2f} $* (~`+{all_time_dt:.2f} DT`) ({all_time['total_trades']} trades)"
             )
 
@@ -208,6 +213,8 @@ class TelegramController:
             if hasattr(self.exchange, "reset_paper_balances"):
                 self.exchange.reset_paper_balances()
             self.strategy.is_paused = False
+            cap = self.db.get_capital()
+            cap_dt = cap * dt_rate
             for sym in config.symbols:
                 try:
                     p = await self.exchange.fetch_current_price(sym)
@@ -215,8 +222,9 @@ class TelegramController:
                 except Exception as e:
                     logger.warning(f"Error reinitializing grid for {sym}: {e}")
             return (
-                "🔄 *Base de données et trades réinitialisés à 0 avec succès !*\n"
-                "Toutes les anciennes opérations ont été effacées et de nouvelles grilles propres sont actives."
+                f"🔄 *Base de données et trades réinitialisés à 0 avec succès !*\n"
+                f"Toutes les anciennes opérations ont été effacées.\n"
+                f"Nouvelles grilles actives avec un capital propre de *${cap:,.2f} USD* (~`{cap_dt:,.0f} DT`)."
             )
 
         elif base_cmd == "/pause":
