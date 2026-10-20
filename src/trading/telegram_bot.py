@@ -43,14 +43,23 @@ class TelegramController:
         """Instant notification pushed on every profitable grid sell."""
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         daily = self.db.get_daily_pnl(today)
+        sym = trade.get("symbol") or config.symbol
+        current_capital = self.db.get_capital()
+        dt_rate = 3.10
+
+        profit_usd = trade['net_profit_usd']
+        profit_dt = profit_usd * dt_rate
+        cap_dt = current_capital * dt_rate
+        daily_dt = daily['net_profit_usd'] * dt_rate
 
         msg = (
-            f"💰 *PROFIT ENCAISSÉ EN DIRECT !*\n"
+            f"💰 *PROFIT ENCAISSÉ ET RÉINVESTI !*\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🪙 *Paire :* `{config.symbol}`\n"
-            f"📈 *Gain Net :* *+{trade['net_profit_usd']:.4f} $* (`+{trade['roi_percent']}%`)\n"
+            f"🪙 *Actif :* `{sym}`\n"
+            f"📈 *Gain Net :* *+{profit_usd:.4f} $* (~`+{profit_dt:.2f} DT`) | `+{trade['roi_percent']}%`\n"
             f"🛒 *Achat :* `${trade['buy_price']:.2f}` ➔ 🏷️ *Vente :* `${trade['sell_price']:.2f}`\n\n"
-            f"📊 *Cumul Aujourd'hui :* *+{daily['net_profit_usd']:.2f} $* ({daily['trades_count']} trades)"
+            f"🏦 *Capital Actif :* *${current_capital:,.2f} USD* (~`{cap_dt:,.0f} DT`)\n"
+            f"📊 *Gains Aujourd'hui :* *+{daily['net_profit_usd']:.2f} $* (~`+{daily_dt:.2f} DT`) ({daily['trades_count']} trades)"
         )
         await self.send_message(msg)
 
@@ -59,7 +68,12 @@ class TelegramController:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         daily = self.db.get_daily_pnl(today)
         all_time = self.db.get_all_time_stats()
-        balances = await self.exchange.fetch_balances()
+        current_capital = self.db.get_capital()
+        dt_rate = 3.10
+
+        daily_dt = daily['net_profit_usd'] * dt_rate
+        all_time_dt = all_time['total_profit_usd'] * dt_rate
+        cap_dt = current_capital * dt_rate
 
         mode_str = "🟢 SIMULATION PAPER (Zéro risque)" if config.trading_mode == "paper" else "🚀 LIVE PRODUCTION RÉEL"
 
@@ -67,11 +81,12 @@ class TelegramController:
             f"📊 *BILAN JOURNALIER QUANTITATIF APEX*\n"
             f"📅 *Date :* `{today}` | *Mode :* {mode_str}\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"💵 *Gains Nets Aujourd'hui :* *+{daily['net_profit_usd']:.2f} $*\n"
-            f"🎯 *Objectif 10$/j :* {f'ATTEINT ! 🎉' if daily['net_profit_usd'] >= 10.0 else f'{int((daily['net_profit_usd']/10)*100)}% complété'}\n"
+            f"💵 *Gains Nets Aujourd'hui :* *+{daily['net_profit_usd']:.2f} $* (~`+{daily_dt:.2f} DT`)\n"
+            f"🎯 *Objectif 1 000 DT/mois :* ~33 DT/jour ({f'ATTEINT AUJOURD’HUI ! 🎉' if daily_dt >= 33.0 else f'{int((daily_dt/33)*100)}% complété'})\n"
             f"🔄 *Trades Exécutés :* `{daily['trades_count']}`\n"
-            f"💼 *Soldes Actuels :* `{balances['usdt']} USDT` | `{balances['crypto']} {config.symbol.split('/')[0]}`\n\n"
-            f"🏦 *Total Cumulé All-Time :* *+{all_time['total_profit_usd']:.2f} $* ({all_time['total_trades']} trades)\n"
+            f"🏦 *Capital Composé Total :* *${current_capital:,.2f} USD* (~`{cap_dt:,.0f} DT`)\n"
+            f"🪙 *Portefeuille Actif :* `{', '.join(config.symbols)}`\n\n"
+            f"🏦 *Total Cumulé All-Time :* *+{all_time['total_profit_usd']:.2f} $* (~`+{all_time_dt:.2f} DT`) ({all_time['total_trades']} trades)\n"
             f"🛡️ *Statut VPS :* 100% Opérationnel 24/7"
         )
         await self.send_message(report)
@@ -79,62 +94,136 @@ class TelegramController:
 
     async def handle_command(self, cmd: str) -> str:
         """Processes interactive user commands sent via Telegram."""
-        cmd = cmd.strip().lower()
+        parts = cmd.strip().split()
+        if not parts:
+            return ""
+        base_cmd = parts[0].lower()
+        dt_rate = 3.10
 
-        if cmd in ["/start", "/help"]:
+        if base_cmd in ["/start", "/help"]:
             return (
                 "🤖 *Commandes Apex Trading Agent :*\n\n"
-                "• `/status` : Prix actuel, état du bot et de la grille\n"
-                "• `/balance` : Solde disponible en USDT et Crypto\n"
-                "• `/profit` : P&L du jour et historique total\n"
-                "• `/pause` : Mettre la grille en pause\n"
+                "• `/balance` : Solde USDT libre, USDT engagé, cryptos et valeur totale\n"
+                "• `/status` : État général, capital, grilles et prix en direct\n"
+                "• `/profit` : Bénéfices encaissés aujourd'hui et cumulés (USD & DT)\n"
+                "• `/setcapital <DT>` : Modifier le capital (ex: `/setcapital 30000`)\n"
+                "• `/reset` : Réinitialiser la base et recommencer les trades à 0\n"
+                "• `/pause` : Mettre la stratégie en pause\n"
                 "• `/resume` : Relancer la stratégie\n"
                 "• `/help` : Afficher ce menu d'aide"
             )
 
-        elif cmd == "/status":
-            price = await self.exchange.fetch_current_price()
+        elif base_cmd == "/status":
+            current_capital = self.db.get_capital()
+            cap_dt = current_capital * dt_rate
             open_orders = self.db.get_open_orders()
             buys = sum(1 for o in open_orders if o["side"] == "buy")
             sells = sum(1 for o in open_orders if o["side"] == "sell")
             status_str = "⏸️ En Pause" if self.strategy.is_paused else "🟢 Actif & En Ligne"
 
+            prices_lines = []
+            for sym in config.symbols:
+                try:
+                    p = await self.exchange.fetch_current_price(sym)
+                    prices_lines.append(f"  • `{sym}`: ${p:,.2f}")
+                except Exception:
+                    prices_lines.append(f"  • `{sym}`: non joignable")
+
             return (
-                f"📊 *État du Bot Apex :*\n"
+                f"📊 *État du Bot Apex Multi-Actifs :*\n"
                 f"• *Statut :* {status_str}\n"
-                f"• *Paire :* `{config.symbol}`\n"
-                f"• *Prix Actuel :* `${price:.2f}`\n"
+                f"• *Capital Actif :* *${current_capital:,.2f} USD* (~`{cap_dt:,.0f} DT`)\n"
+                f"• *Prix en direct :*\n" + "\n".join(prices_lines) + "\n"
                 f"• *Mode :* `{config.trading_mode.upper()}`\n"
-                f"• *Grille Active :* `{buys} Achats` / `{sells} Ventes` en attente"
+                f"• *Ordres en cours :* `{buys} Achats` / `{sells} Ventes` en attente"
             )
 
-        elif cmd == "/balance":
+        elif base_cmd == "/balance":
+            current_capital = self.db.get_capital()
             balances = await self.exchange.fetch_balances()
-            price = await self.exchange.fetch_current_price()
-            total_value = balances["usdt"] + (balances["crypto"] * price)
+            usdt_free = float(balances.get("usdt", 0.0))
+            usdt_locked = float(balances.get("usdt_locked", 0.0))
+            all_crypto = balances.get("all_crypto", {})
+
+            crypto_lines = []
+            total_crypto_usd = 0.0
+            for sym in config.symbols:
+                base = sym.split("/")[0]
+                amount = float(all_crypto.get(base, 0.0))
+                price = 0.0
+                try:
+                    price = await self.exchange.fetch_current_price(sym)
+                except Exception:
+                    pass
+                val_usd = amount * price
+                total_crypto_usd += val_usd
+                if amount > 0:
+                    crypto_lines.append(f"• *{base} :* `{amount:,.4f}` (~${val_usd:,.2f})")
+                else:
+                    crypto_lines.append(f"• *{base} :* `0.0000` ($0.00)")
+
+            total_portfolio_usd = usdt_free + usdt_locked + total_crypto_usd
+            total_portfolio_dt = total_portfolio_usd * dt_rate
+            cap_dt = current_capital * dt_rate
+            mode_label = "🟢 PAPER (Simulation en direct)" if config.trading_mode == "paper" else "🚀 LIVE (Production Réelle)"
+
             return (
-                f"💼 *Portefeuille :*\n"
-                f"• *USDT :* `${balances['usdt']:.2f}`\n"
-                f"• *{config.symbol.split('/')[0]} :* `{balances['crypto']}` (${balances['crypto'] * price:.2f})\n"
-                f"• *Valeur Totale :* *${total_value:.2f} USD*"
+                f"💼 *Portefeuille & Soldes :*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"💵 *USDT Disponible :* *${usdt_free:,.2f}* (~`{usdt_free * dt_rate:,.0f} DT`)\n"
+                f"🔒 *USDT Engagé (Grilles) :* *${usdt_locked:,.2f}* (~`{usdt_locked * dt_rate:,.0f} DT`)\n"
+                f"🪙 *Actifs Cryptos :*\n" + "\n".join(crypto_lines) + "\n\n"
+                f"💰 *Valeur Totale :* *${total_portfolio_usd:,.2f} USD* (~`{total_portfolio_dt:,.0f} DT`)\n"
+                f"🏦 *Capital Référent :* *${current_capital:,.2f} USD* (~`{cap_dt:,.0f} DT`)\n"
+                f"⚙️ *Mode :* `{mode_label}`"
             )
 
-        elif cmd == "/profit":
+        elif base_cmd == "/profit":
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             daily = self.db.get_daily_pnl(today)
             all_time = self.db.get_all_time_stats()
+            daily_dt = daily['net_profit_usd'] * dt_rate
+            all_time_dt = all_time['total_profit_usd'] * dt_rate
+
             return (
                 f"💰 *Performances Financières :*\n"
-                f"• *Profit Aujourd'hui :* *+{daily['net_profit_usd']:.2f} $* ({daily['trades_count']} trades)\n"
-                f"• *Volume 24h :* `${daily['volume_usd']:.2f}`\n"
-                f"• *Profit Cumulé Total :* *+{all_time['total_profit_usd']:.2f} $* ({all_time['total_trades']} trades)"
+                f"• *Gain Aujourd'hui :* *+{daily['net_profit_usd']:.2f} $* (~`+{daily_dt:.2f} DT`) ({daily['trades_count']} trades)\n"
+                f"• *Volume 24h :* `${daily['volume_usd']:,.2f}`\n"
+                f"• *Gain Total Cumulé :* *+{all_time['total_profit_usd']:.2f} $* (~`+{all_time_dt:.2f} DT`) ({all_time['total_trades']} trades)"
             )
 
-        elif cmd == "/pause":
+        elif base_cmd == "/setcapital":
+            if len(parts) < 2:
+                return "⚠️ Veuillez spécifier un montant en Dinars. Exemple : `/setcapital 30000`"
+            try:
+                dt_amount = float(parts[1])
+                usd_amount = dt_amount / dt_rate
+                self.db.set_capital(usd_amount)
+                return f"✅ *Capital mis à jour avec succès !*\nNouveau capital : *${usd_amount:,.2f} USD* (~`{dt_amount:,.0f} DT`)"
+            except ValueError:
+                return "⚠️ Montant invalide. Exemple : `/setcapital 30000`"
+
+        elif base_cmd == "/reset":
+            self.db.reset_database()
+            if hasattr(self.exchange, "reset_paper_balances"):
+                self.exchange.reset_paper_balances()
+            self.strategy.is_paused = False
+            for sym in config.symbols:
+                try:
+                    p = await self.exchange.fetch_current_price(sym)
+                    await self.strategy.initialize_grid(p, symbol=sym)
+                except Exception as e:
+                    logger.warning(f"Error reinitializing grid for {sym}: {e}")
+            return (
+                "🔄 *Base de données et trades réinitialisés à 0 avec succès !*\n"
+                "Toutes les anciennes opérations ont été effacées et de nouvelles grilles propres sont actives."
+            )
+
+        elif base_cmd == "/pause":
             self.strategy.is_paused = True
             return "⏸️ *Stratégie mise en pause.* Aucun nouvel ordre ne sera exécuté."
 
-        elif cmd == "/resume":
+        elif base_cmd == "/resume":
             self.strategy.is_paused = False
             return "▶️ *Stratégie relancée !* La grille et l'écoute de marché reprennent immédiatement."
 
@@ -167,20 +256,7 @@ class TelegramController:
     async def start(self) -> None:
         """Starts 24/7 background Telegram controller and daily report scheduler."""
         self.is_running = True
-        logger.info("Telegram Controller active and listening for commands.")
-
-        # Announce launch to Louay
-        price = await self.exchange.fetch_current_price()
-        mode_label = "SIMULATION PAPER" if config.trading_mode == "paper" else "LIVE PRODUCTION"
-        await self.send_message(
-            f"🚀 *Agent Quantitatif Apex Connecté 24/7 sur VPS !*\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🪙 *Paire :* `{config.symbol}` à `${price:.2f}`\n"
-            f"💰 *Capital Alloué :* `${config.total_capital_usd} USD`\n"
-            f"⚙️ *Mode :* `{mode_label}`\n\n"
-            f"Je surveille le marché en continu et vous notifierai à chaque gain.\n"
-            f"Tapez `/status` ou `/help` pour me piloter à tout moment !"
-        )
+        logger.info("Telegram Controller active and listening for commands (silent start mode).")
 
         while self.is_running:
             try:

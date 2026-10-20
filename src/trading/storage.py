@@ -23,6 +23,7 @@ class TradingDatabase:
             conn.executescript("""
             CREATE TABLE IF NOT EXISTS grid_orders (
                 order_id TEXT PRIMARY KEY,
+                symbol TEXT NOT NULL DEFAULT 'BTC/USDT',
                 side TEXT NOT NULL,
                 price REAL NOT NULL,
                 amount REAL NOT NULL,
@@ -35,6 +36,7 @@ class TradingDatabase:
 
             CREATE TABLE IF NOT EXISTS completed_trades (
                 trade_id TEXT PRIMARY KEY,
+                symbol TEXT NOT NULL DEFAULT 'BTC/USDT',
                 buy_price REAL NOT NULL,
                 sell_price REAL NOT NULL,
                 amount REAL NOT NULL,
@@ -60,30 +62,85 @@ class TradingDatabase:
             );
             """)
 
+            # Safe column migrations if database already existed
+            try:
+                conn.execute("ALTER TABLE grid_orders ADD COLUMN symbol TEXT DEFAULT 'BTC/USDT'")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE completed_trades ADD COLUMN symbol TEXT DEFAULT 'BTC/USDT'")
+            except sqlite3.OperationalError:
+                pass
+
+    def get_capital(self) -> float:
+        """Retrieves active trading capital, compounding accumulated profits."""
+        from src.trading.config import config
+        stored = self.get_state("current_capital_usd")
+        if stored is not None:
+            try:
+                return float(stored)
+            except ValueError:
+                pass
+        initial = float(config.total_capital_usd)
+        self.set_state("current_capital_usd", initial)
+        return initial
+
+    def set_capital(self, capital_usd: float) -> float:
+        """Sets or resets the base working capital."""
+        val = round(float(capital_usd), 4)
+        self.set_state("current_capital_usd", val)
+        return val
+
+    def add_capital(self, profit_usd: float) -> float:
+        """Adds realized profit (every cent) directly into active working capital."""
+        current = self.get_capital()
+        new_capital = round(current + profit_usd, 4)
+        self.set_state("current_capital_usd", new_capital)
+        return new_capital
+
+    def reset_database(self, initial_capital: Optional[float] = None) -> None:
+        """Resets all orders, trades, and pnl metrics to start fresh from zero."""
+        from src.trading.config import config
+        cap = float(initial_capital if initial_capital is not None else config.total_capital_usd)
+        with self.get_connection() as conn:
+            conn.execute("DELETE FROM grid_orders;")
+            conn.execute("DELETE FROM completed_trades;")
+            conn.execute("DELETE FROM daily_pnl;")
+            conn.execute("DELETE FROM bot_state;")
+        self.set_capital(cap)
+        self.set_state("paper_balance_usdt", cap)
+        initial_crypto = {s.split("/")[0]: 0.0 for s in config.symbols}
+        self.set_state("paper_balance_crypto", json.dumps(initial_crypto))
+
     def save_order(self, order_id: str, side: str, price: float, amount: float,
-                   cost_usd: float, status: str = "open", pair_order_id: Optional[str] = None) -> None:
+                   cost_usd: float, status: str = "open", pair_order_id: Optional[str] = None,
+                   symbol: str = "BTC/USDT") -> None:
         now_iso = datetime.now(timezone.utc).isoformat()
         with self.get_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO grid_orders 
-                (order_id, side, price, amount, cost_usd, status, pair_order_id, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (order_id, symbol, side, price, amount, cost_usd, status, pair_order_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(order_id) DO UPDATE SET
+                    symbol = excluded.symbol,
                     status = excluded.status,
                     pair_order_id = COALESCE(excluded.pair_order_id, grid_orders.pair_order_id),
                     updated_at = excluded.updated_at
                 """,
-                (order_id, side, price, amount, cost_usd, status, pair_order_id, now_iso, now_iso)
+                (order_id, symbol, side, price, amount, cost_usd, status, pair_order_id, now_iso, now_iso)
             )
 
-    def get_open_orders(self, side: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_open_orders(self, side: Optional[str] = None, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         with self.get_connection() as conn:
             query = "SELECT * FROM grid_orders WHERE status = 'open'"
             params = []
             if side:
                 query += " AND side = ?"
                 params.append(side)
+            if symbol:
+                query += " AND symbol = ?"
+                params.append(symbol)
             query += " ORDER BY price ASC"
             rows = conn.execute(query, params).fetchall()
             return [dict(r) for r in rows]
@@ -97,7 +154,8 @@ class TradingDatabase:
             )
 
     def record_completed_trade(self, trade_id: str, buy_price: float, sell_price: float,
-                               amount: float, fee_usd: float = 0.0) -> Dict[str, Any]:
+                               amount: float, fee_usd: float = 0.0, symbol: str = "BTC/USDT") -> Dict[str, Any]:
+        from src.trading.config import config
         now = datetime.now(timezone.utc)
         today = now.strftime("%Y-%m-%d")
         now_iso = now.isoformat()
@@ -112,10 +170,10 @@ class TradingDatabase:
             conn.execute(
                 """
                 INSERT OR IGNORE INTO completed_trades 
-                (trade_id, buy_price, sell_price, amount, gross_profit_usd, fee_usd, net_profit_usd, roi_percent, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (trade_id, symbol, buy_price, sell_price, amount, gross_profit_usd, fee_usd, net_profit_usd, roi_percent, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (trade_id, buy_price, sell_price, amount, gross_profit, fee_usd, net_profit, roi_pct, now_iso)
+                (trade_id, symbol, buy_price, sell_price, amount, gross_profit, fee_usd, net_profit, roi_pct, now_iso)
             )
 
             # Update Daily PnL atomically
@@ -132,8 +190,13 @@ class TradingDatabase:
                 (today, net_profit, sell_cost, now_iso)
             )
 
+        # Automatically compound every cent earned into trading capital
+        if config.compound_profits and net_profit > 0:
+            self.add_capital(net_profit)
+
         return {
             "trade_id": trade_id,
+            "symbol": symbol,
             "buy_price": buy_price,
             "sell_price": sell_price,
             "net_profit_usd": net_profit,

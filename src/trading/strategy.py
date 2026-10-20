@@ -16,22 +16,31 @@ class SpotGridStrategy:
         self.exchange = exchange
         self.on_trade_callback = on_trade_callback
         self.is_paused = False
+        self.symbols = config.symbols
         self.grid_levels = config.grid_levels
         self.step_pct = config.grid_step_percent / 100.0
         self.half_span_pct = config.range_half_span_percent / 100.0
 
-    async def initialize_grid(self, current_price: float) -> None:
-        """Sets up the initial grid orders around current price if none are open."""
-        open_orders = self.db.get_open_orders()
+    async def initialize_grid(self, current_price: float, symbol: Optional[str] = None) -> None:
+        """Sets up the initial grid orders around current price for a specific asset symbol."""
+        sym = symbol or config.symbol
+        open_orders = self.db.get_open_orders(symbol=sym)
         if open_orders:
-            logger.info(f"Existing grid restored from database ({len(open_orders)} active orders).")
+            logger.info(f"Existing grid for {sym} restored from database ({len(open_orders)} active orders).")
             return
 
-        logger.info(f"Initializing fresh Geometric Spot Grid around ${current_price:.2f}...")
+        # Fetch current dynamic compounding capital
+        total_working_capital = self.db.get_capital()
+        per_asset_capital = total_working_capital / max(1, len(self.symbols))
 
-        # Calculate allocation per level ($100 divided into levels)
+        logger.info(
+            f"Initializing fresh Geometric Grid for {sym} around ${current_price:.2f} "
+            f"(Allocated Capital: ${per_asset_capital:.2f} / Total: ${total_working_capital:.2f})..."
+        )
+
+        # Allocate 75% for buy orders, 25% cash buffer
         levels_count = max(4, self.grid_levels // 2)
-        total_buy_capital = config.total_capital_usd * 0.75  # 75% for buy orders, 25% cash buffer
+        total_buy_capital = per_asset_capital * 0.75
         alloc_per_level_usd = total_buy_capital / levels_count
 
         # Place buy orders below current price
@@ -40,33 +49,31 @@ class SpotGridStrategy:
             amount = round(alloc_per_level_usd / buy_price, 4)
 
             try:
-                order = await self.exchange.place_order("buy", buy_price, amount)
+                order = await self.exchange.place_order("buy", buy_price, amount, symbol=sym)
                 self.db.save_order(
                     order_id=order["id"],
+                    symbol=sym,
                     side="buy",
                     price=buy_price,
                     amount=amount,
                     cost_usd=alloc_per_level_usd,
                     status="open"
                 )
-                logger.info(f"Grid Level [BUY] placed: {amount} @ ${buy_price:.2f} (${alloc_per_level_usd:.2f})")
+                logger.info(f"[{sym}] Grid Level [BUY] placed: {amount} @ ${buy_price:.2f} (${alloc_per_level_usd:.2f})")
             except Exception as e:
-                logger.warning(f"Could not place buy grid level {i}: {e}")
+                logger.warning(f"[{sym}] Could not place buy grid level {i}: {e}")
 
-    async def evaluate_tick(self) -> List[Dict[str, Any]]:
-        """Main strategy evaluation cycle executed every tick."""
-        if self.is_paused:
-            return []
+    async def evaluate_tick_for_symbol(self, sym: str) -> List[Dict[str, Any]]:
+        """Evaluates price and orders for one specific asset symbol."""
+        current_price = await self.exchange.fetch_current_price(sym)
+        closes_1m = await self.exchange.fetch_historical_closes(sym, timeframe="1m", limit=50)
+        regime = evaluate_market_regime(closes_1m)
 
-        current_price = await self.exchange.fetch_current_price()
-        closes = await self.exchange.fetch_historical_closes(limit=50)
-        regime = evaluate_market_regime(closes)
-
-        # Check if grid needs initial setup
-        open_orders = self.db.get_open_orders()
+        # Check if grid needs initial setup for this symbol
+        open_orders = self.db.get_open_orders(symbol=sym)
         if not open_orders:
-            await self.initialize_grid(current_price)
-            open_orders = self.db.get_open_orders()
+            await self.initialize_grid(current_price, sym)
+            open_orders = self.db.get_open_orders(symbol=sym)
 
         completed_cycles = []
 
@@ -82,15 +89,16 @@ class SpotGridStrategy:
             amount = float(order["amount"])
 
             self.db.update_order_status(order_id, "filled")
-            logger.info(f"GRID ORDER FILLED [{side.upper()}]: {amount} @ ${price:.2f}")
+            logger.info(f"[{sym}] GRID ORDER FILLED [{side.upper()}]: {amount} @ ${price:.2f}")
 
             if side == "buy":
-                # BUY filled -> place corresponding SELL order at higher level
+                # BUY filled -> place corresponding SELL order at higher level (+step_pct)
                 target_sell_price = round(price * (1.0 + self.step_pct), 4)
                 try:
-                    sell_order = await self.exchange.place_order("sell", target_sell_price, amount)
+                    sell_order = await self.exchange.place_order("sell", target_sell_price, amount, symbol=sym)
                     self.db.save_order(
                         order_id=sell_order["id"],
+                        symbol=sym,
                         side="sell",
                         price=target_sell_price,
                         amount=amount,
@@ -98,30 +106,30 @@ class SpotGridStrategy:
                         status="open",
                         pair_order_id=order_id
                     )
-                    logger.info(f"Recycled -> Placed [SELL] order: {amount} @ ${target_sell_price:.2f}")
+                    logger.info(f"[{sym}] Recycled -> Placed [SELL] order: {amount} @ ${target_sell_price:.2f}")
                 except Exception as e:
-                    logger.error(f"Failed to place paired sell order: {e}")
+                    logger.error(f"[{sym}] Failed to place paired sell order: {e}")
 
             elif side == "sell":
-                # SELL filled -> PROFIT REALIZED! Record completed trade
-                pair_order_id = order.get("pair_order_id")
-                # Deduce original buy price (price / (1 + step_pct))
+                # SELL filled -> PROFIT REALIZED! Record completed trade & compound profit
                 buy_price = round(price / (1.0 + self.step_pct), 4)
                 trade_id = f"trade_{uuid.uuid4().hex[:10]}"
 
                 trade_info = self.db.record_completed_trade(
                     trade_id=trade_id,
+                    symbol=sym,
                     buy_price=buy_price,
                     sell_price=price,
                     amount=amount,
                     fee_usd=round(price * amount * 0.001, 4)
                 )
 
+                new_capital = self.db.get_capital()
                 completed_cycles.append(trade_info)
                 logger.info(
-                    f"💰 PROFIT ENCAISSÉ ! Trade {trade_id}: "
+                    f"💰 PROFIT ENCAISSÉ ET RÉINVESTI [{sym}] ! Trade {trade_id}: "
                     f"+${trade_info['net_profit_usd']:.4f} ({trade_info['roi_percent']}%) | "
-                    f"Acheté: ${buy_price:.2f} -> Vendu: ${price:.2f}"
+                    f"Capital Actif Total: ${new_capital:.2f}"
                 )
 
                 # Send Instant Telegram Alert
@@ -131,24 +139,95 @@ class SpotGridStrategy:
                     except Exception as e:
                         logger.error(f"Telegram alert callback failed: {e}")
 
-                # Recycle back to BUY order if market regime is safe (Trend Guard)
-                if regime["safe_to_buy"]:
+                # Recycle back to BUY order if confluence score & market regime are safe
+                confluence_score = regime.get("confluence_score", 50.0)
+                is_confluence_safe = confluence_score >= config.min_confluence_score
+
+                if regime["safe_to_buy"] and is_confluence_safe:
                     target_buy_price = round(price * (1.0 - self.step_pct), 4)
                     try:
                         alloc = target_buy_price * amount
-                        new_buy = await self.exchange.place_order("buy", target_buy_price, amount)
+                        new_buy = await self.exchange.place_order("buy", target_buy_price, amount, symbol=sym)
                         self.db.save_order(
                             order_id=new_buy["id"],
+                            symbol=sym,
                             side="buy",
                             price=target_buy_price,
                             amount=amount,
                             cost_usd=alloc,
                             status="open"
                         )
-                        logger.info(f"Recycled -> Placed [BUY] order: {amount} @ ${target_buy_price:.2f}")
+                        logger.info(f"[{sym}] Recycled -> Placed [BUY] order (Confluence: {confluence_score}/100): {amount} @ ${target_buy_price:.2f}")
                     except Exception as e:
-                        logger.warning(f"Could not re-seed buy order: {e}")
+                        logger.warning(f"[{sym}] Could not re-seed buy order: {e}")
                 else:
-                    logger.warning(f"Trend Guard Active ({regime['regime']}) — Pausing buy re-seed to protect capital.")
+                    logger.warning(
+                        f"[{sym}] Trend Guard / Confluence Active ({regime['regime']}, score: {confluence_score}/100) — "
+                        f"Mise en pause de l'achat pour protéger le capital."
+                    )
+
+        # 1. Stale Buy Order Cleanup: Cancel buy orders left far behind by rising prices
+        stale_threshold = config.stale_order_max_drop_percent / 100.0
+        active_buys = self.db.get_open_orders(side="buy", symbol=sym)
+        for b_order in active_buys:
+            b_price = float(b_order["price"])
+            if current_price > b_price and (current_price - b_price) / current_price > stale_threshold:
+                try:
+                    await self.exchange.cancel_order(b_order)
+                    self.db.update_order_status(b_order["order_id"], "cancelled")
+                    logger.info(f"[{sym}] Trailing Grid -> Cancelled stale BUY order @ ${b_price:.2f} (price is now ${current_price:.2f}). Capital recycled.")
+                except Exception as e:
+                    logger.warning(f"[{sym}] Could not cancel stale order: {e}")
+
+        # 2. Dynamic Trailing Grid: replenish buy levels if price climbed and fewer than 3 buys remain
+        refreshed_buys = self.db.get_open_orders(side="buy", symbol=sym)
+        confluence_score = regime.get("confluence_score", 50.0)
+        target_ladder_levels = max(3, self.grid_levels // 2)
+
+        if len(refreshed_buys) < target_ladder_levels and regime["safe_to_buy"] and confluence_score >= config.min_confluence_score:
+            total_cap = self.db.get_capital()
+            per_sym_cap = total_cap / max(1, len(self.symbols))
+            alloc_per_level = (per_sym_cap * 0.80) / target_ladder_levels
+            existing_prices = [float(o["price"]) for o in refreshed_buys]
+
+            for lvl in range(1, target_ladder_levels + 1):
+                new_bp = round(current_price * (1.0 - (lvl * self.step_pct)), 4)
+                # Ensure no duplicate orders close to this price
+                already_has_nearby = any(abs(new_bp - ep) / new_bp < (self.step_pct * 0.4) for ep in existing_prices)
+                if not already_has_nearby and alloc_per_level >= 5.0:
+                    amt = round(alloc_per_level / new_bp, 4)
+                    try:
+                        new_b = await self.exchange.place_order("buy", new_bp, amt, symbol=sym)
+                        self.db.save_order(
+                            order_id=new_b["id"],
+                            symbol=sym,
+                            side="buy",
+                            price=new_bp,
+                            amount=amt,
+                            cost_usd=alloc_per_level,
+                            status="open"
+                        )
+                        existing_prices.append(new_bp)
+                        logger.info(f"[{sym}] Trailing Grid -> Placed fresh [BUY] level: {amt} @ ${new_bp:.2f} (Ladder count: {len(existing_prices)})")
+                    except Exception as e:
+                        logger.debug(f"[{sym}] Trailing buy placement skip: {e}")
 
         return completed_cycles
+
+    async def evaluate_tick(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Main strategy evaluation cycle executed every tick across configured symbols."""
+        if self.is_paused:
+            return []
+
+        if symbol:
+            return await self.evaluate_tick_for_symbol(symbol)
+
+        all_completed = []
+        for sym in self.symbols:
+            try:
+                cycles = await self.evaluate_tick_for_symbol(sym)
+                all_completed.extend(cycles)
+            except Exception as e:
+                logger.error(f"Error evaluating tick for symbol {sym}: {e}", exc_info=True)
+
+        return all_completed

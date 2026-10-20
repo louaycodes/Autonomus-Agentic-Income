@@ -1,5 +1,6 @@
 """Trading Agent Configuration Module."""
 import os
+from typing import List
 from pathlib import Path
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -10,19 +11,30 @@ class TradingConfig(BaseModel):
     # Trading Mode: 'paper' (real live prices, zero capital risk) or 'live' (exchange API keys)
     trading_mode: str = Field(default_factory=lambda: os.getenv("TRADING_MODE", "paper").lower())
     
-    # Target Asset & Capital
+    # Target Asset Portfolio & Capital (High Volatility Scalping Basket)
     exchange_name: str = Field(default_factory=lambda: os.getenv("EXCHANGE_NAME", "binance").lower())
-    symbol: str = Field(default_factory=lambda: os.getenv("SYMBOL", "SOL/USDT"))
-    total_capital_usd: float = Field(default_factory=lambda: float(os.getenv("TOTAL_CAPITAL_USD", "100.0")))
+    symbols: List[str] = Field(default_factory=lambda: [s.strip() for s in os.getenv("SYMBOLS", "BTC/USDT,SOL/USDT,ETH/USDT").split(",") if s.strip()])
+    total_capital_usd: float = Field(default_factory=lambda: float(os.getenv("TOTAL_CAPITAL_USD", "1000.0")))
+    compound_profits: bool = Field(default_factory=lambda: os.getenv("COMPOUND_PROFITS", "true").lower() == "true")
+    leverage: int = Field(default_factory=lambda: int(os.getenv("LEVERAGE", "1"))) # Default spot 1x
     
-    # Grid Parameters
-    grid_levels: int = Field(default_factory=lambda: int(os.getenv("GRID_LEVELS", "10")))
-    grid_step_percent: float = Field(default_factory=lambda: float(os.getenv("GRID_STEP_PERCENT", "1.2"))) # 1.2% profit per grid
-    range_half_span_percent: float = Field(default_factory=lambda: float(os.getenv("RANGE_HALF_SPAN_PERCENT", "8.0"))) # +/- 8% price envelope
+    # Backward compatibility helper for single symbol
+    @property
+    def symbol(self) -> str:
+        return self.symbols[0] if self.symbols else "SOL/USDT"
     
-    # Strategy Safeguards
+    # Grid Parameters (High-Frequency Micro-Oscillations)
+    grid_levels: int = Field(default_factory=lambda: int(os.getenv("GRID_LEVELS", "8")))
+    grid_step_percent: float = Field(default_factory=lambda: float(os.getenv("GRID_STEP_PERCENT", "1.5"))) # 1.5% optimal spread
+    range_half_span_percent: float = Field(default_factory=lambda: float(os.getenv("RANGE_HALF_SPAN_PERCENT", "6.0")))
+    stale_order_max_drop_percent: float = Field(default_factory=lambda: float(os.getenv("STALE_ORDER_MAX_DROP_PERCENT", "8.0")))
+    
+    # Dual-Engine Strategy Safeguards
     enable_trend_guard: bool = Field(default_factory=lambda: os.getenv("ENABLE_TREND_GUARD", "true").lower() == "true")
-    rsi_oversold_threshold: float = Field(default_factory=lambda: float(os.getenv("RSI_OVERSOLD_THRESHOLD", "28.0")))
+    enable_momentum_breakout: bool = Field(default_factory=lambda: os.getenv("ENABLE_MOMENTUM_BREAKOUT", "true").lower() == "true")
+    risk_per_trade_percent: float = Field(default_factory=lambda: float(os.getenv("RISK_PER_TRADE_PERCENT", "2.0")))
+    min_confluence_score: float = Field(default_factory=lambda: float(os.getenv("MIN_CONFLUENCE_SCORE", "45.0")))
+    rsi_oversold_threshold: float = Field(default_factory=lambda: float(os.getenv("RSI_OVERSOLD_THRESHOLD", "25.0")))
     stop_loss_percent: float = Field(default_factory=lambda: float(os.getenv("STOP_LOSS_PERCENT", "15.0")))
     
     # Exchange API Credentials (for live mode)

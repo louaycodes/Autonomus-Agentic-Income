@@ -45,3 +45,14 @@ def test_bot_state(temp_db: TradingDatabase):
     assert temp_db.get_state("paused") == "true"
     temp_db.set_state("paused", "false")
     assert temp_db.get_state("paused") == "false"
+
+def test_reset_database(temp_db: TradingDatabase):
+    temp_db.save_order("ord_reset", "buy", 100.0, 1.0, 100.0, "open")
+    temp_db.record_completed_trade("tr_reset", 100.0, 105.0, 1.0, 0.1)
+    assert len(temp_db.get_open_orders()) == 1
+    assert temp_db.get_all_time_stats()["total_trades"] == 1
+
+    temp_db.reset_database(initial_capital=5000.0)
+    assert len(temp_db.get_open_orders()) == 0
+    assert temp_db.get_all_time_stats()["total_trades"] == 0
+    assert temp_db.get_capital() == 5000.0

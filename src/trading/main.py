@@ -3,6 +3,11 @@ import asyncio
 import logging
 import signal
 import sys
+from pathlib import Path
+
+# Ensure project root is in sys.path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
 from src.trading.config import config
 from src.trading.storage import TradingDatabase
 from src.trading.exchange import ExchangeAdapter
@@ -27,15 +32,17 @@ async def strategy_loop(strategy: SpotGridStrategy, stop_event: asyncio.Event):
         await asyncio.sleep(config.poll_interval_seconds)
 
 async def main():
-    logger.info("======================================================")
-    logger.info("   APEX AUTONOMOUS QUANTITATIVE TRADING AGENT         ")
-    logger.info(f"   Symbol: {config.symbol} | Capital: ${config.total_capital_usd}")
-    logger.info(f"   Mode: {config.trading_mode.upper()} | Exchange: {config.exchange_name.upper()}")
-    logger.info(f"   Database: {config.db_path}")
-    logger.info("======================================================")
-
     # 1. Initialize persistent storage layer
     db = TradingDatabase(config.db_path)
+    active_capital = db.get_capital()
+
+    logger.info("======================================================")
+    logger.info("   APEX AUTONOMOUS QUANTITATIVE TRADING AGENT         ")
+    logger.info(f"   Portfolio: {', '.join(config.symbols)} | Capital: ${active_capital:.2f}")
+    logger.info(f"   Mode: {config.trading_mode.upper()} | Exchange: {config.exchange_name.upper()}")
+    logger.info(f"   Compounding: {'ON' if config.compound_profits else 'OFF'} | Min Confluence: {config.min_confluence_score}/100")
+    logger.info(f"   Database: {config.db_path}")
+    logger.info("======================================================")
 
     # 2. Initialize exchange adapter
     exchange = ExchangeAdapter(db)
@@ -54,12 +61,13 @@ async def main():
     # 5. Instantiate Telegram controller
     telegram_bot = TelegramController(db, strategy, exchange)
 
-    # 6. Pre-warm strategy with initial price fetch
-    try:
-        price = await exchange.fetch_current_price()
-        logger.info(f"Market Connection Verified: {config.symbol} = ${price:.2f}")
-    except Exception as e:
-        logger.error(f"Market pre-warm note: {e}")
+    # 6. Pre-warm strategy with initial price fetch across portfolio
+    for sym in config.symbols:
+        try:
+            price = await exchange.fetch_current_price(sym)
+            logger.info(f"Market Connection Verified: {sym} = ${price:.2f}")
+        except Exception as e:
+            logger.error(f"Market pre-warm note for {sym}: {e}")
 
     # 7. Setup graceful exit handlers
     loop = asyncio.get_running_loop()

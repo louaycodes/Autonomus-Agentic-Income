@@ -31,3 +31,11 @@ async def test_telegram_commands(test_bot_setup):
 
     unknown_reply = await bot.handle_command("/inconnue")
     assert "inconnue" in unknown_reply.lower()
+
+    balance_reply = await bot.handle_command("/balance")
+    assert "Portefeuille" in balance_reply
+    assert "USDT" in balance_reply
+    assert "Valeur Totale" in balance_reply
+
+    reset_reply = await bot.handle_command("/reset")
+    assert "réinitialisés" in reset_reply

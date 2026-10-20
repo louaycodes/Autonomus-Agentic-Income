@@ -43,3 +43,4 @@ data/*.tmp
 .DS_Store
 .idea/
 .vscode/
+trade-with-claude.txt
