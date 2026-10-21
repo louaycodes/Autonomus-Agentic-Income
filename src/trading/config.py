@@ -25,9 +25,9 @@ class TradingConfig(BaseModel):
     
     # Grid Parameters (High-Frequency Micro-Oscillations)
     grid_levels: int = Field(default_factory=lambda: int(os.getenv("GRID_LEVELS", "8")))
-    grid_step_percent: float = Field(default_factory=lambda: float(os.getenv("GRID_STEP_PERCENT", "1.5"))) # 1.5% optimal spread
+    grid_step_percent: float = Field(default_factory=lambda: float(os.getenv("GRID_STEP_PERCENT", "0.8"))) # 0.8% high-frequency scalping spread
     range_half_span_percent: float = Field(default_factory=lambda: float(os.getenv("RANGE_HALF_SPAN_PERCENT", "6.0")))
-    stale_order_max_drop_percent: float = Field(default_factory=lambda: float(os.getenv("STALE_ORDER_MAX_DROP_PERCENT", "8.0")))
+    stale_order_max_drop_percent: float = Field(default_factory=lambda: float(os.getenv("STALE_ORDER_MAX_DROP_PERCENT", "2.5")))
     
     # Dual-Engine Strategy Safeguards
     enable_trend_guard: bool = Field(default_factory=lambda: os.getenv("ENABLE_TREND_GUARD", "true").lower() == "true")

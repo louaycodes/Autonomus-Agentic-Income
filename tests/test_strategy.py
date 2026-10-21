@@ -41,5 +41,5 @@ async def test_order_fill_and_recycling(test_setup):
     db.save_order("sell_ord_1", "sell", target_sell_price, target_buy["amount"], target_sell_price * target_buy["amount"], "open", pair_order_id=target_buy["order_id"])
 
     open_sells = db.get_open_orders(side="sell")
-    assert len(open_sells) == 1
-    assert open_sells[0]["price"] > target_buy["price"]
+    assert len(open_sells) >= 1
+    assert any(s["price"] > target_buy["price"] for s in open_sells)

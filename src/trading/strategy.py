@@ -38,13 +38,50 @@ class SpotGridStrategy:
             f"(Allocated Capital: ${per_asset_capital:.2f} / Total: ${total_working_capital:.2f})..."
         )
 
-        # Allocate 75% for buy orders, 25% cash buffer
+        # Allocate 75% for grid orders, 25% cash buffer
         levels_count = max(4, self.grid_levels // 2)
-        total_buy_capital = per_asset_capital * 0.75
-        alloc_per_level_usd = total_buy_capital / levels_count
+        total_working_alloc = per_asset_capital * 0.75
+        alloc_per_level_usd = total_working_alloc / levels_count
 
-        # Place buy orders below current price
-        for i in range(1, levels_count + 1):
+        # 1. Active Seed Position: buy 1 level at current market price to immediately hold inventory for upside profit
+        seed_amount = round(alloc_per_level_usd / current_price, 4)
+        try:
+            seed_order = await self.exchange.place_order("buy", current_price, seed_amount, symbol=sym)
+            self.db.save_order(
+                order_id=seed_order["id"],
+                symbol=sym,
+                side="buy",
+                price=current_price,
+                amount=seed_amount,
+                cost_usd=alloc_per_level_usd,
+                status="filled"
+            )
+            if self.exchange.mode == "paper":
+                base = sym.split("/")[0]
+                fee_crypto = seed_amount * self.exchange.paper_fee_rate
+                net_crypto = seed_amount - fee_crypto
+                self.exchange.paper_balance_crypto[base] = self.exchange.paper_balance_crypto.get(base, 0.0) + net_crypto
+                self.exchange._save_paper_state()
+
+            # Immediately place the target SELL order at +step_pct above current price
+            target_sell_price = round(current_price * (1.0 + self.step_pct), 4)
+            sell_order = await self.exchange.place_order("sell", target_sell_price, seed_amount, symbol=sym)
+            self.db.save_order(
+                order_id=sell_order["id"],
+                symbol=sym,
+                side="sell",
+                price=target_sell_price,
+                amount=seed_amount,
+                cost_usd=target_sell_price * seed_amount,
+                status="open",
+                pair_order_id=seed_order["id"]
+            )
+            logger.info(f"[{sym}] Active Seed Position taken: {seed_amount} @ ${current_price:.2f} -> Initial Target [SELL] placed: ${target_sell_price:.2f} (+{config.grid_step_percent}%)")
+        except Exception as e:
+            logger.warning(f"[{sym}] Could not place active seed position: {e}")
+
+        # 2. Place remaining buy limit orders below current price (levels 1 to levels_count - 1)
+        for i in range(1, levels_count):
             buy_price = round(current_price * (1.0 - (i * self.step_pct)), 4)
             amount = round(alloc_per_level_usd / buy_price, 4)
 
@@ -179,15 +216,15 @@ class SpotGridStrategy:
                 except Exception as e:
                     logger.warning(f"[{sym}] Could not cancel stale order: {e}")
 
-        # 2. Dynamic Trailing Grid: replenish buy levels if price climbed and fewer than 3 buys remain
+        # 2. Dynamic Trailing Grid: replenish buy levels right underneath current price
         refreshed_buys = self.db.get_open_orders(side="buy", symbol=sym)
         confluence_score = regime.get("confluence_score", 50.0)
-        target_ladder_levels = max(3, self.grid_levels // 2)
+        target_ladder_levels = max(3, (self.grid_levels // 2) - 1)
 
         if len(refreshed_buys) < target_ladder_levels and regime["safe_to_buy"] and confluence_score >= config.min_confluence_score:
             total_cap = self.db.get_capital()
             per_sym_cap = total_cap / max(1, len(self.symbols))
-            alloc_per_level = (per_sym_cap * 0.80) / target_ladder_levels
+            alloc_per_level = (per_sym_cap * 0.75) / max(3, self.grid_levels // 2)
             existing_prices = [float(o["price"]) for o in refreshed_buys]
 
             for lvl in range(1, target_ladder_levels + 1):
@@ -211,6 +248,33 @@ class SpotGridStrategy:
                         logger.info(f"[{sym}] Trailing Grid -> Placed fresh [BUY] level: {amt} @ ${new_bp:.2f} (Ladder count: {len(existing_prices)})")
                     except Exception as e:
                         logger.debug(f"[{sym}] Trailing buy placement skip: {e}")
+
+        # 3. Dynamic Bullish Follow-Through: if all sell orders were filled on a pump, re-seed active inventory
+        open_sells = self.db.get_open_orders(side="sell", symbol=sym)
+        if len(open_sells) == 0 and regime["safe_to_buy"] and confluence_score >= config.min_confluence_score:
+            total_cap = self.db.get_capital()
+            per_sym_cap = total_cap / max(1, len(self.symbols))
+            alloc_per_level = (per_sym_cap * 0.75) / max(3, self.grid_levels // 2)
+            can_buy = True
+            if self.exchange.mode == "paper" and self.exchange.paper_balance_usdt < alloc_per_level:
+                can_buy = False
+
+            if can_buy:
+                amt = round(alloc_per_level / current_price, 4)
+                try:
+                    p_order = await self.exchange.place_order("buy", current_price, amt, symbol=sym)
+                    self.db.save_order(order_id=p_order["id"], symbol=sym, side="buy", price=current_price, amount=amt, cost_usd=alloc_per_level, status="filled")
+                    if self.exchange.mode == "paper":
+                        base = sym.split("/")[0]
+                        net_crypto = amt * (1.0 - self.exchange.paper_fee_rate)
+                        self.exchange.paper_balance_crypto[base] = self.exchange.paper_balance_crypto.get(base, 0.0) + net_crypto
+                        self.exchange._save_paper_state()
+                    t_sell_p = round(current_price * (1.0 + self.step_pct), 4)
+                    s_order = await self.exchange.place_order("sell", t_sell_p, amt, symbol=sym)
+                    self.db.save_order(order_id=s_order["id"], symbol=sym, side="sell", price=t_sell_p, amount=amt, cost_usd=t_sell_p*amt, status="open", pair_order_id=p_order["id"])
+                    logger.info(f"[{sym}] Trend Follow-Through -> Re-seeded inventory @ ${current_price:.2f} -> Target [SELL] @ ${t_sell_p:.2f} (+{config.grid_step_percent}%)")
+                except Exception as e:
+                    logger.debug(f"[{sym}] Trend follow-through skip: {e}")
 
         return completed_cycles
 
