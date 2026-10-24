@@ -20,7 +20,9 @@ class AgentCognitionEngine:
     def __init__(self, db: TradingDatabase, exchange: ExchangeAdapter):
         self.db = db
         self.exchange = exchange
+        self._rebalance_cooldown: Dict[str, float] = {}
         self._init_memory_defaults()
+
 
     def _init_memory_defaults(self) -> None:
         """Initializes foundational agent beliefs, persona, and learning memory if empty."""
@@ -194,6 +196,9 @@ class AgentCognitionEngine:
         into active USDT at current spot price, and instantly spawns fresh active micro-grids
         around CURRENT spot prices.
         """
+        import time
+        now_ts = time.time()
+
         balances = await self.exchange.fetch_balances()
         free_usdt = float(balances.get("usdt", 0.0))
         total_cap = self.db.get_capital()
@@ -202,45 +207,65 @@ class AgentCognitionEngine:
 
         # Check if cash is locked or assets are stagnant
         for sym in config.symbols:
+            # 1. Respect 10-minute cooldown per symbol
+            if now_ts - self._rebalance_cooldown.get(sym, 0) < 600:
+                continue
+
             open_sells = self.db.get_open_orders(side="sell", symbol=sym)
             open_buys = self.db.get_open_orders(side="buy", symbol=sym)
             current_price = await self.exchange.fetch_current_price(sym)
 
-            # Check if all open sells are situated far above current price (> 1.5% above spot)
+            # 2. Check if active orders ALREADY exist near current price (+/- 1.2%)
+            has_active_sell_nearby = any(abs(float(o["price"]) - current_price) / current_price < 0.012 for o in open_sells)
+            has_active_buy_nearby = any(abs(float(o["price"]) - current_price) / current_price < 0.012 for o in open_buys)
+
+            if has_active_sell_nearby and (has_active_buy_nearby or free_usdt >= 25.0):
+                # Active micro-grid is already operational around current price
+                continue
+
+            # 3. Check if all open sells are situated far above current price (> 1.5% above spot)
             if open_sells:
                 lowest_sell_price = min(float(o["price"]) for o in open_sells)
                 price_distance_pct = ((lowest_sell_price - current_price) / current_price) * 100.0
             else:
                 price_distance_pct = 0.0
 
-            is_cash_depleted = free_usdt < min_required_cash
+            is_cash_depleted = free_usdt < 25.0
             is_stagnant_out_of_range = (price_distance_pct > 1.5) and (len(open_buys) == 0 or is_cash_depleted)
 
             if is_cash_depleted or is_stagnant_out_of_range:
+                # Find distant upper sell orders (> 1.5% above spot)
+                distant_sells = [o for o in open_sells if float(o["price"]) > current_price * 1.015]
+                if not distant_sells:
+                    continue
+
                 logger.info(
                     f"⚠️ [PERPETUAL ANTI-LOCK TRIGGERED] [{sym}] Cash Libre: ${free_usdt:.2f} (Min: ${min_required_cash:.2f}) | "
                     f"Écart au plus bas ordre de vente: +{price_distance_pct:.2f}%. Déblocage de liquidité active..."
                 )
 
-                if open_sells:
-                    # Select the highest (most distant) sell order
-                    highest_sell = max(open_sells, key=lambda o: float(o["price"]))
-                    sell_order_id = highest_sell["order_id"]
-                    sell_amount = float(highest_sell["amount"])
-                    base = sym.split("/")[0]
+                # Select the largest distant sell order
+                chosen_sell = max(distant_sells, key=lambda o: float(o["amount"]) * float(o["price"]))
+                sell_order_id = chosen_sell["order_id"]
+                sell_amount = float(chosen_sell["amount"])
+                base = sym.split("/")[0]
 
-                    # Rebalance fraction (15-20%)
-                    dyn_params = self.get_dynamic_parameters()
-                    fraction = float(dyn_params.get("anti_lock_rebalance_fraction", 0.15))
-                    rebalance_amount = round(sell_amount * fraction, 4)
+                # Target to free between $60 and $100 USDT, or 20% of the order
+                target_rebalance_crypto = min(sell_amount * 0.20, max(0.0005, 80.0 / current_price))
+                rebalance_amount = round(target_rebalance_crypto, 4)
+                if rebalance_amount <= 0 or rebalance_amount > sell_amount:
+                    rebalance_amount = round(sell_amount * 0.20, 4)
 
-                    if rebalance_amount > 0:
-                        # Cancel the old distant sell order
-                        try:
-                            await self.exchange.cancel_order(highest_sell)
-                            self.db.update_order_status(sell_order_id, "rebalanced")
-                        except Exception as e:
-                            logger.warning(f"Could not cancel order {sell_order_id} for rebalancing: {e}")
+                if rebalance_amount > 0:
+                    self._rebalance_cooldown[sym] = now_ts
+
+                    # Cancel the old distant sell order
+                    try:
+                        await self.exchange.cancel_order(chosen_sell)
+                        self.db.update_order_status(sell_order_id, "rebalanced")
+                    except Exception as e:
+                        logger.warning(f"Could not cancel order {sell_order_id} for rebalancing: {e}")
+
 
                         # Liquidate the fraction to USDT at current spot price
                         freed_usdt = round(rebalance_amount * current_price * 0.999, 4)
