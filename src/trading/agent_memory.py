@@ -280,7 +280,15 @@ class AgentCognitionEngine:
                             try:
                                 # Seed position at spot
                                 new_seed = await self.exchange.place_order("buy", current_price, seed_amt, symbol=sym)
-                                self.db.save_order(new_seed["id"], sym, "buy", current_price, seed_amt, alloc_active, "filled")
+                                self.db.save_order(
+                                    order_id=new_seed["id"],
+                                    symbol=sym,
+                                    side="buy",
+                                    price=current_price,
+                                    amount=seed_amt,
+                                    cost_usd=alloc_active,
+                                    status="filled"
+                                )
                                 if self.exchange.mode == "paper":
                                     net_seed = seed_amt * (1.0 - self.exchange.paper_fee_rate)
                                     self.exchange.paper_balance_crypto[base] = self.exchange.paper_balance_crypto.get(base, 0.0) + net_seed
@@ -289,13 +297,31 @@ class AgentCognitionEngine:
                                 # Target sell at +step
                                 target_sell = round(current_price * (1.0 + step), 4)
                                 new_sell = await self.exchange.place_order("sell", target_sell, seed_amt, symbol=sym)
-                                self.db.save_order(new_sell["id"], sym, "sell", target_sell, seed_amt, target_sell * seed_amt, "open", pair_order_id=new_seed["id"])
+                                self.db.save_order(
+                                    order_id=new_sell["id"],
+                                    symbol=sym,
+                                    side="sell",
+                                    price=target_sell,
+                                    amount=seed_amt,
+                                    cost_usd=target_sell * seed_amt,
+                                    status="open",
+                                    pair_order_id=new_seed["id"]
+                                )
 
                                 # Active buy level below spot
                                 target_buy = round(current_price * (1.0 - step), 4)
                                 buy_amt = round(alloc_active / target_buy, 4)
                                 new_buy = await self.exchange.place_order("buy", target_buy, buy_amt, symbol=sym)
-                                self.db.save_order(new_buy["id"], sym, "buy", target_buy, buy_amt, alloc_active, "open")
+                                self.db.save_order(
+                                    order_id=new_buy["id"],
+                                    symbol=sym,
+                                    side="buy",
+                                    price=target_buy,
+                                    amount=buy_amt,
+                                    cost_usd=alloc_active,
+                                    status="open"
+                                )
+
 
                                 logger.info(
                                     f"🚀 [MICRO-GRILLE ACTIVE DÉPLOYÉE] [{sym}] Re-ancrée sur le cours direct (${current_price:.2f}) : "
