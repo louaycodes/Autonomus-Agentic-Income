@@ -13,6 +13,7 @@ from src.trading.storage import TradingDatabase
 from src.trading.exchange import ExchangeAdapter
 from src.trading.strategy import SpotGridStrategy
 from src.trading.telegram_bot import TelegramController
+from src.trading.agent_memory import AgentCognitionEngine
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,18 +49,22 @@ async def main():
     exchange = ExchangeAdapter(db)
     await exchange.initialize()
 
-    # 3. Create Telegram bot controller forward-reference
+    # 3. Initialize Agent Cognition & Memory Engine
+    agent_cognition = AgentCognitionEngine(db, exchange)
+
+    # 4. Create Telegram bot controller forward-reference
     telegram_bot = None
 
     async def trade_filled_callback(trade_info):
         if telegram_bot:
             await telegram_bot.notify_trade_filled(trade_info)
 
-    # 4. Instantiate strategy
-    strategy = SpotGridStrategy(db, exchange, on_trade_callback=trade_filled_callback)
+    # 5. Instantiate strategy with cognitive engine
+    strategy = SpotGridStrategy(db, exchange, on_trade_callback=trade_filled_callback, agent_cognition=agent_cognition)
 
-    # 5. Instantiate Telegram controller
-    telegram_bot = TelegramController(db, strategy, exchange)
+    # 6. Instantiate Telegram controller with cognitive engine
+    telegram_bot = TelegramController(db, strategy, exchange, agent_cognition=agent_cognition)
+
 
     # 6. Pre-warm strategy with initial price fetch across portfolio
     for sym in config.symbols:

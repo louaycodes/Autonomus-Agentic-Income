@@ -10,15 +10,17 @@ from src.trading.storage import TradingDatabase
 logger = logging.getLogger("telegram_bot")
 
 class TelegramController:
-    def __init__(self, db: TradingDatabase, strategy: Any, exchange: Any):
+    def __init__(self, db: TradingDatabase, strategy: Any, exchange: Any, agent_cognition: Optional[Any] = None):
         self.db = db
         self.strategy = strategy
         self.exchange = exchange
+        self.agent_cognition = agent_cognition
         self.token = config.telegram_bot_token
         self.chat_id = config.telegram_chat_id
         self.last_update_id = 0
         self.is_running = False
         self.last_reported_date = ""
+
 
     async def send_message(self, text: str) -> bool:
         """Sends a markdown message to Louay's Telegram."""
@@ -79,6 +81,21 @@ class TelegramController:
 
         mode_str = "🟢 SIMULATION PAPER (Zéro risque)" if config.trading_mode == "paper" else "🚀 LIVE PRODUCTION RÉEL"
 
+        cognition_section = ""
+        if self.agent_cognition:
+            try:
+                reflection = await self.agent_cognition.perform_daily_reflection("daily_report")
+                dyn = reflection.get("parameters", {})
+                cognition_section = (
+                    f"\n\n🧠 *RÉFLEXION & APPRENTISSAGE DE L'AGENT :*\n"
+                    f"• *Marché :* {reflection.get('assessment')}\n"
+                    f"• *Constats :* {reflection.get('lessons')}\n"
+                    f"• *Adaptation :* {reflection.get('actions')}\n"
+                    f"• *Réglages Actifs :* Spread `{dyn.get('active_grid_step_pct')}%` | Réserve Cash `{dyn.get('cash_reserve_floor_pct')}%`"
+                )
+            except Exception as e:
+                logger.warning(f"Error during daily reflection: {e}")
+
         report = (
             f"📊 *BILAN JOURNALIER QUANTITATIF APEX*\n"
             f"📅 *Date :* `{today}` | *Mode :* {mode_str}\n"
@@ -90,6 +107,7 @@ class TelegramController:
             f"🪙 *Portefeuille Actif :* `{', '.join(config.symbols)}`\n\n"
             f"🏦 *Total Cumulé All-Time :* *+{all_time['total_profit_usd']:.2f} $* (~`+{all_time_dt:.2f} DT`) ({all_time['total_trades']} trades)\n"
             f"🛡️ *Statut VPS :* 100% Opérationnel 24/7"
+            f"{cognition_section}"
         )
         await self.send_message(report)
         self.last_reported_date = today
@@ -108,12 +126,15 @@ class TelegramController:
                 "• `/balance` : Solde USDT libre, engagé, cryptos et valeur totale (USD & DT)\n"
                 "• `/status` : État général, capital, grilles et cours en direct (USD & DT)\n"
                 "• `/profit` : Bénéfices encaissés aujourd'hui et cumulés (USD & DT)\n"
+                "• `/agent` : Cerveau de l'agent, mémoire, adaptations et contexte\n"
+                "• `/reflect` : Déclencher une auto-évaluation cognitive immédiate\n"
                 "• `/setcapital <DT>` : Modifier le capital (ex: `/setcapital 30000`)\n"
                 "• `/reset` : Réinitialiser la base et recommencer les trades à 0\n"
                 "• `/pause` : Mettre la stratégie en pause\n"
                 "• `/resume` : Relancer la stratégie\n"
                 "• `/help` : Afficher ce menu d'aide"
             )
+
 
         elif base_cmd == "/status":
             current_capital = self.db.get_capital()
@@ -227,6 +248,58 @@ class TelegramController:
                 f"Nouvelles grilles actives avec un capital propre de *${cap:,.2f} USD* (~`{cap_dt:,.0f} DT`)."
             )
 
+        elif base_cmd == "/agent":
+            if not self.agent_cognition:
+                return "ℹ️ Moteur cognitif non initialisé."
+
+            dyn = self.agent_cognition.get_dynamic_parameters()
+            identity = self.db.get_agent_memory("agent_identity", {})
+            reflections = self.db.get_latest_agent_reflections(limit=1)
+            latest_ref = reflections[0] if reflections else None
+            last_anti_lock = self.db.get_agent_memory("last_anti_lock_action")
+
+            anti_lock_str = "Aucun déblocage requis (Trésorerie saine)"
+            if last_anti_lock and isinstance(last_anti_lock, dict):
+                anti_lock_str = f"Libéré ${last_anti_lock.get('freed_usdt', 0):.2f} sur {last_anti_lock.get('symbol')} @ ${last_anti_lock.get('re_anchored_price', 0):.2f}"
+
+            ref_text = "Pas encore de réflexion enregistrée."
+            if latest_ref:
+                ref_text = (
+                    f"📅 *Dernier constat ({latest_ref.get('date')}) :*\n"
+                    f"• *Marché :* `{latest_ref.get('market_assessment')}`\n"
+                    f"• *Leçon apprise :* _{latest_ref.get('lessons_learned')}_\n"
+                    f"• *Action appliquée :* {latest_ref.get('adapted_actions')}"
+                )
+
+            return (
+                f"🧠 *CERVEAU & MÉMOIRE DE L'AGENT APEX*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🤖 *Identité :* {identity.get('name', 'Apex Agent')} (Auto-apprenant)\n"
+                f"🎯 *Objectif :* {identity.get('core_objective', 'Génération de cashflow quotidien')}\n\n"
+                f"⚙️ *Paramètres Dynamiques Actifs :*\n"
+                f"  • *Spread Grille (Scalping) :* `{dyn.get('active_grid_step_pct', config.grid_step_percent)}%` (Auto-ajusté)\n"
+                f"  • *Plancher Trésorerie Sécurisée :* `{dyn.get('cash_reserve_floor_pct', 30.0)}%` (Anti-lock garanti)\n"
+                f"  • *Fraction Anti-Blocage :* `{int(float(dyn.get('anti_lock_rebalance_fraction', 0.15)) * 100)}%`\n"
+                f"  • *Dernier Anti-Lock :* {anti_lock_str}\n\n"
+                f"{ref_text}\n\n"
+                f"💡 _L'agent analyse chaque cycle et adapte son comportement pour ne jamais se bloquer à vie._"
+            )
+
+        elif base_cmd == "/reflect":
+            if not self.agent_cognition:
+                return "ℹ️ Moteur cognitif non initialisé."
+            ref = await self.agent_cognition.perform_daily_reflection("manual_telegram_trigger")
+            dyn = ref.get("parameters", {})
+            return (
+                f"🔍 *AUTO-ÉVALUATION COGNITIVE IMMÉDIATE (AGENT)*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📊 *Trades analysés :* `{ref.get('trades_count')}` | *Gains :* `+${ref.get('profit_usd', 0):.2f}`\n"
+                f"🌐 *Diagnostic Marché :* {ref.get('assessment')}\n\n"
+                f"💡 *Constats & Leçons :*\n{ref.get('lessons')}\n\n"
+                f"🛠️ *Adaptation Comportementale :*\n{ref.get('actions')}\n\n"
+                f"⚙️ *Paramètre Spread Actualisé :* `{dyn.get('active_grid_step_pct')}%`"
+            )
+
         elif base_cmd == "/pause":
             self.strategy.is_paused = True
             return "⏸️ *Stratégie mise en pause.* Aucun nouvel ordre ne sera exécuté."
@@ -236,6 +309,7 @@ class TelegramController:
             return "▶️ *Stratégie relancée !* La grille et l'écoute de marché reprennent immédiatement."
 
         return "❓ Commande inconnue. Tapez `/help` pour voir les commandes disponibles."
+
 
     async def poll_telegram_messages(self) -> None:
         """Asynchronous long-polling for interactive chat commands."""

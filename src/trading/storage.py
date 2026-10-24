@@ -60,6 +60,24 @@ class TradingDatabase:
                 value TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS agent_reflections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                date TEXT NOT NULL,
+                market_assessment TEXT NOT NULL,
+                trades_evaluated INTEGER NOT NULL,
+                total_profit_usd REAL NOT NULL,
+                lessons_learned TEXT NOT NULL,
+                adapted_actions TEXT NOT NULL,
+                applied_parameters TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_memory (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             """)
 
             # Safe column migrations if database already existed
@@ -256,3 +274,89 @@ class TradingDatabase:
             if row:
                 return row["value"]
             return default
+
+    # --- AGENT COGNITIVE MEMORY & SELF-REFLECTION ---
+
+    def save_agent_reflection(
+        self,
+        date_str: str,
+        market_assessment: str,
+        trades_evaluated: int,
+        total_profit_usd: float,
+        lessons_learned: str,
+        adapted_actions: str,
+        applied_parameters: Dict[str, Any]
+    ) -> int:
+        """Saves a structured daily or situational cognitive reflection from the trading agent."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        params_json = json.dumps(applied_parameters)
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO agent_reflections 
+                (timestamp, date, market_assessment, trades_evaluated, total_profit_usd, lessons_learned, adapted_actions, applied_parameters)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (now_iso, date_str, market_assessment, trades_evaluated, total_profit_usd, lessons_learned, adapted_actions, params_json)
+            )
+            return cursor.lastrowid
+
+    def get_latest_agent_reflections(self, limit: int = 5) -> List[Dict[str, Any]]:
+        """Retrieves recent cognitive reflections ordered from newest to oldest."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM agent_reflections ORDER BY id DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
+            results = []
+            for r in rows:
+                item = dict(r)
+                try:
+                    item["applied_parameters"] = json.loads(item["applied_parameters"])
+                except Exception:
+                    pass
+                results.append(item)
+            return results
+
+    def set_agent_memory(self, key: str, value: Any) -> None:
+        """Stores persistent agent cognitive memory, insights, or learned parameters."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        val_str = json.dumps(value) if not isinstance(value, str) else value
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_memory (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                (key, val_str, now_iso)
+            )
+
+    def get_agent_memory(self, key: str, default: Any = None) -> Any:
+        """Retrieves persistent memory value decoded from JSON if possible."""
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT value FROM agent_memory WHERE key = ?", (key,)).fetchone()
+            if row:
+                raw = row["value"]
+                try:
+                    return json.loads(raw)
+                except Exception:
+                    return raw
+            return default
+
+    def get_all_agent_memory(self) -> Dict[str, Any]:
+        """Retrieves all active memory keys and values."""
+        with self.get_connection() as conn:
+            rows = conn.execute("SELECT key, value, updated_at FROM agent_memory").fetchall()
+            out = {}
+            for r in rows:
+                k = r["key"]
+                raw = r["value"]
+                try:
+                    out[k] = json.loads(raw)
+                except Exception:
+                    out[k] = raw
+            return out
+
