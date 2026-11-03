@@ -208,8 +208,8 @@ class TradingDatabase:
                 (today, net_profit, sell_cost, now_iso)
             )
 
-        # Automatically compound every cent earned into trading capital
-        if config.compound_profits and net_profit > 0:
+        # Automatically update trading capital with realized PnL (compounding gains and accounting for stops)
+        if config.compound_profits and net_profit != 0:
             self.add_capital(net_profit)
 
         return {

@@ -56,15 +56,27 @@ class TelegramController:
         buy_dt = trade['buy_price'] * dt_rate
         sell_dt = trade['sell_price'] * dt_rate
 
-        msg = (
-            f"💰 *PROFIT ENCAISSÉ ET RÉINVESTI !*\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🪙 *Actif :* `{sym}`\n"
-            f"📈 *Gain Net :* *+{profit_usd:.4f} $* (~`+{profit_dt:.2f} DT`) | `+{trade['roi_percent']}%`\n"
-            f"🛒 *Achat :* `${trade['buy_price']:.2f}` (~`{buy_dt:.2f} DT`) ➔ 🏷️ *Vente :* `${trade['sell_price']:.2f}` (~`{sell_dt:.2f} DT`)\n\n"
-            f"🏦 *Capital Actif :* *${current_capital:,.2f} USD* (~`{cap_dt:,.0f} DT`)\n"
-            f"📊 *Gains Aujourd'hui :* *+{daily['net_profit_usd']:.2f} $* (~`+{daily_dt:.2f} DT`) ({daily['trades_count']} trades)"
-        )
+        if profit_usd >= 0:
+            msg = (
+                f"💰 *PROFIT ENCAISSÉ ET RÉINVESTI !*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🪙 *Actif :* `{sym}`\n"
+                f"📈 *Gain Net :* *+{profit_usd:.4f} $* (~`+{profit_dt:.2f} DT`) | `+{trade['roi_percent']}%`\n"
+                f"🛒 *Achat :* `${trade['buy_price']:.2f}` (~`{buy_dt:.2f} DT`) ➔ 🏷️ *Vente :* `${trade['sell_price']:.2f}` (~`{sell_dt:.2f} DT`)\n\n"
+                f"🏦 *Capital Actif :* *${current_capital:,.2f} USD* (~`{cap_dt:,.0f} DT`)\n"
+                f"📊 *Gains Aujourd'hui :* *+{daily['net_profit_usd']:.2f} $* (~`+{daily_dt:.2f} DT`) ({daily['trades_count']} trades)"
+            )
+        else:
+            msg = (
+                f"🛡️ *STOP-LOSS DE PROTECTION EXÉCUTÉ !*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🪙 *Actif :* `{sym}`\n"
+                f"📉 *Perte Contrôlée :* *{profit_usd:.4f} $* (~`{profit_dt:.2f} DT`) | `{trade['roi_percent']}%`\n"
+                f"🛒 *Achat :* `${trade['buy_price']:.2f}` ➔ 🛑 *Vente Stop :* `${trade['sell_price']:.2f}`\n\n"
+                f"💵 *Trésorerie Récupérée :* Capital USDT libéré pour relancer immédiatement le trading aux prix bas !\n"
+                f"🏦 *Capital Actif :* *${current_capital:,.2f} USD* (~`{cap_dt:,.0f} DT`)\n"
+                f"📊 *Bilan Aujourd'hui :* *{daily['net_profit_usd']:.2f} $* (~`{daily_dt:.2f} DT`) ({daily['trades_count']} trades)"
+            )
         await self.send_message(msg)
 
     async def send_daily_report(self) -> None:

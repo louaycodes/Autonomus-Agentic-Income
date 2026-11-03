@@ -35,7 +35,16 @@ class TradingConfig(BaseModel):
     risk_per_trade_percent: float = Field(default_factory=lambda: float(os.getenv("RISK_PER_TRADE_PERCENT", "2.0")))
     min_confluence_score: float = Field(default_factory=lambda: float(os.getenv("MIN_CONFLUENCE_SCORE", "45.0")))
     rsi_oversold_threshold: float = Field(default_factory=lambda: float(os.getenv("RSI_OVERSOLD_THRESHOLD", "25.0")))
-    stop_loss_percent: float = Field(default_factory=lambda: float(os.getenv("STOP_LOSS_PERCENT", "15.0")))
+    stop_loss_percent: float = Field(default_factory=lambda: float(os.getenv("STOP_LOSS_PERCENT", "4.0")))
+    
+    def get_amount_precision(self, symbol: str) -> int:
+        sym_upper = symbol.upper()
+        if "BTC" in sym_upper:
+            return 6
+        elif "ETH" in sym_upper:
+            return 5
+        else:
+            return 4
     
     # Exchange API Credentials (for live mode)
     exchange_api_key: str = Field(default_factory=lambda: os.getenv("EXCHANGE_API_KEY", ""))

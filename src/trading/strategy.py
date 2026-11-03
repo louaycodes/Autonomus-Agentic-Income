@@ -56,6 +56,8 @@ class SpotGridStrategy:
         # Fetch current dynamic compounding capital
         total_working_capital = self.db.get_capital()
         per_asset_capital = total_working_capital / max(1, len(self.symbols))
+        base = sym.split("/")[0]
+        precision = config.get_amount_precision(sym)
 
         logger.info(
             f"Initializing fresh Geometric Grid for {sym} around ${current_price:.2f} "
@@ -68,47 +70,82 @@ class SpotGridStrategy:
         total_working_alloc = per_asset_capital * 0.65
         alloc_per_level_usd = total_working_alloc / levels_count
 
-        # 1. Active Seed Position: buy 1 level at current market price to immediately hold inventory for upside profit
-        seed_amount = round(alloc_per_level_usd / current_price, 4)
-        try:
-            seed_order = await self.exchange.place_order("buy", current_price, seed_amount, symbol=sym)
-            self.db.save_order(
-                order_id=seed_order["id"],
-                symbol=sym,
-                side="buy",
-                price=current_price,
-                amount=seed_amount,
-                cost_usd=alloc_per_level_usd,
-                status="filled"
-            )
-            if self.exchange.mode == "paper":
-                base = sym.split("/")[0]
-                fee_crypto = seed_amount * self.exchange.paper_fee_rate
-                net_crypto = seed_amount - fee_crypto
-                self.exchange.paper_balance_crypto[base] = self.exchange.paper_balance_crypto.get(base, 0.0) + net_crypto
-                self.exchange._save_paper_state()
+        # Check existing crypto in wallet
+        existing_crypto = 0.0
+        if self.exchange.mode == "paper":
+            existing_crypto = float(self.exchange.paper_balance_crypto.get(base, 0.0))
+        else:
+            bals = await self.exchange.fetch_balances()
+            existing_crypto = float(bals.get("crypto", {}).get(base, 0.0))
 
-            # Immediately place the target SELL order at +step above current price
-            target_sell_price = round(current_price * (1.0 + step), 4)
-            sell_order = await self.exchange.place_order("sell", target_sell_price, seed_amount, symbol=sym)
-            self.db.save_order(
-                order_id=sell_order["id"],
-                symbol=sym,
-                side="sell",
-                price=target_sell_price,
-                amount=seed_amount,
-                cost_usd=target_sell_price * seed_amount,
-                status="open",
-                pair_order_id=seed_order["id"]
-            )
-            logger.info(f"[{sym}] Active Seed Position taken: {seed_amount} @ ${current_price:.2f} -> Initial Target [SELL] placed: ${target_sell_price:.2f} (+{round(step * 100, 2)}%)")
-        except Exception as e:
-            logger.warning(f"[{sym}] Could not place active seed position: {e}")
+        balances = await self.exchange.fetch_balances()
+        free_usdt = float(balances.get("usdt", 0.0))
 
-        # 2. Place remaining buy limit orders below current price (levels 1 to levels_count - 1)
+        # 1. Active Seed Position or Inventory Mobilization:
+        target_sell_price = round(current_price * (1.0 + step), 4)
+        if existing_crypto * current_price >= 10.0:
+            # Monetize existing stock directly without needing USDT cash
+            sell_amt = round(min(existing_crypto, alloc_per_level_usd / current_price), precision)
+            if sell_amt > 0:
+                try:
+                    sell_order = await self.exchange.place_order("sell", target_sell_price, sell_amt, symbol=sym)
+                    self.db.save_order(
+                        order_id=sell_order["id"],
+                        symbol=sym,
+                        side="sell",
+                        price=target_sell_price,
+                        amount=sell_amt,
+                        cost_usd=target_sell_price * sell_amt,
+                        status="open"
+                    )
+                    logger.info(f"[{sym}] Stock crypto existant mobilisé -> Vente cible [SELL] posée : {sell_amt} @ ${target_sell_price:.2f}")
+                except Exception as e:
+                    logger.warning(f"[{sym}] Could not place sell from existing inventory: {e}")
+        else:
+            usable_seed_usd = min(alloc_per_level_usd, max(0.0, free_usdt * 0.35))
+            if usable_seed_usd >= 10.0 and free_usdt >= usable_seed_usd:
+                seed_amount = round(usable_seed_usd / current_price, precision)
+                try:
+                    seed_order = await self.exchange.place_order("buy", current_price, seed_amount, symbol=sym)
+                    self.db.save_order(
+                        order_id=seed_order["id"],
+                        symbol=sym,
+                        side="buy",
+                        price=current_price,
+                        amount=seed_amount,
+                        cost_usd=usable_seed_usd,
+                        status="filled"
+                    )
+                    if self.exchange.mode == "paper":
+                        fee_crypto = seed_amount * self.exchange.paper_fee_rate
+                        net_crypto = seed_amount - fee_crypto
+                        self.exchange.paper_balance_crypto[base] = self.exchange.paper_balance_crypto.get(base, 0.0) + net_crypto
+                        self.exchange._save_paper_state()
+                        free_usdt -= usable_seed_usd
+
+                    # Immediately place target SELL order
+                    sell_order = await self.exchange.place_order("sell", target_sell_price, seed_amount, symbol=sym)
+                    self.db.save_order(
+                        order_id=sell_order["id"],
+                        symbol=sym,
+                        side="sell",
+                        price=target_sell_price,
+                        amount=seed_amount,
+                        cost_usd=target_sell_price * seed_amount,
+                        status="open",
+                        pair_order_id=seed_order["id"]
+                    )
+                    logger.info(f"[{sym}] Active Seed Position taken: {seed_amount} @ ${current_price:.2f} -> Initial Target [SELL] placed: ${target_sell_price:.2f} (+{round(step * 100, 2)}%)")
+                except Exception as e:
+                    logger.warning(f"[{sym}] Could not place active seed position: {e}")
+
+        # 2. Place remaining buy limit orders below current price if free USDT is available
         for i in range(1, levels_count):
             buy_price = round(current_price * (1.0 - (i * step)), 4)
-            amount = round(alloc_per_level_usd / buy_price, 4)
+            buy_alloc = min(alloc_per_level_usd, max(0.0, free_usdt * 0.35))
+            if buy_alloc < 10.0 or free_usdt < buy_alloc:
+                break
+            amount = round(buy_alloc / buy_price, precision)
 
             try:
                 order = await self.exchange.place_order("buy", buy_price, amount, symbol=sym)
@@ -118,10 +155,11 @@ class SpotGridStrategy:
                     side="buy",
                     price=buy_price,
                     amount=amount,
-                    cost_usd=alloc_per_level_usd,
+                    cost_usd=buy_alloc,
                     status="open"
                 )
-                logger.info(f"[{sym}] Grid Level [BUY] placed: {amount} @ ${buy_price:.2f} (${alloc_per_level_usd:.2f})")
+                free_usdt -= buy_alloc
+                logger.info(f"[{sym}] Grid Level [BUY] placed: {amount} @ ${buy_price:.2f} (${buy_alloc:.2f})")
             except Exception as e:
                 logger.warning(f"[{sym}] Could not place buy grid level {i}: {e}")
 
@@ -139,6 +177,77 @@ class SpotGridStrategy:
             open_orders = self.db.get_open_orders(symbol=sym)
 
         completed_cycles = []
+        precision = config.get_amount_precision(sym)
+
+        # 0. Stop-Loss Safety Check on open SELL orders:
+        # If current_price drops more than stop_loss_percent below entry price,
+        # cut the position, recover liquid USDT, and resume trading immediately!
+        stop_loss_pct = config.stop_loss_percent
+        active_remaining_orders = []
+        for order in open_orders:
+            if order["side"] == "sell":
+                target_sell_price = float(order["price"])
+                buy_entry_price = round(target_sell_price / (1.0 + self.current_step_pct), 4)
+                price_drop_pct = ((buy_entry_price - current_price) / buy_entry_price) * 100.0
+
+                if price_drop_pct >= stop_loss_pct:
+                    amt = float(order["amount"])
+                    order_id = order["order_id"]
+                    logger.warning(
+                        f"🛡️ [STOP-LOSS DÉCLENCHÉ] [{sym}] Chute de -{price_drop_pct:.2f}% sous le prix d'achat (${buy_entry_price:.2f}). "
+                        f"Vente de sauvegarde immédiate à ${current_price:.2f} pour protéger le capital..."
+                    )
+                    # Cancel the open sell order
+                    try:
+                        await self.exchange.cancel_order(order)
+                        self.db.update_order_status(order_id, "stop_loss")
+                    except Exception as e:
+                        logger.warning(f"[{sym}] Could not cancel sell order for stop-loss: {e}")
+
+                    # Market sell at current_price to recover liquid USDT
+                    base = sym.split("/")[0]
+                    fee = current_price * amt * 0.001
+                    recovered_usdt = round((current_price * amt) - fee, 4)
+
+                    if self.exchange.mode == "paper":
+                        curr_c = float(self.exchange.paper_balance_crypto.get(base, 0.0))
+                        self.exchange.paper_balance_crypto[base] = max(0.0, curr_c - amt)
+                        self.exchange.paper_balance_usdt += recovered_usdt
+                        self.exchange._save_paper_state()
+                    else:
+                        try:
+                            await self.exchange.client.create_market_sell_order(sym, amt)
+                        except Exception as e:
+                            logger.error(f"Live market sell failed during stop loss: {e}")
+
+                    # Record trade with controlled loss
+                    trade_id = f"sl_{uuid.uuid4().hex[:10]}"
+                    trade_info = self.db.record_completed_trade(
+                        trade_id=trade_id,
+                        symbol=sym,
+                        buy_price=buy_entry_price,
+                        sell_price=current_price,
+                        amount=amt,
+                        fee_usd=fee
+                    )
+                    completed_cycles.append(trade_info)
+
+                    # Notify Telegram
+                    if self.on_trade_callback:
+                        try:
+                            await self.on_trade_callback(trade_info)
+                        except Exception as e:
+                            logger.error(f"Telegram alert callback failed: {e}")
+
+                    logger.info(
+                        f"✅ [STOP-LOSS TERMINÉ] [{sym}] +${recovered_usdt:.2f} USDT récupérés en caisse liquide. "
+                        f"Trading relancé aux nouveaux prix bas."
+                    )
+                    continue
+
+            active_remaining_orders.append(order)
+
+        open_orders = active_remaining_orders
 
         # Check open orders for fills
         for order in open_orders:
@@ -266,7 +375,7 @@ class SpotGridStrategy:
                     new_bp = round(current_price * (1.0 - (lvl * step)), 4)
                     already_has_nearby = any(abs(new_bp - ep) / new_bp < (step * 0.4) for ep in existing_prices)
                     if not already_has_nearby and alloc_per_level >= 5.0 and free_usdt >= (cash_floor + alloc_per_level):
-                        amt = round(alloc_per_level / new_bp, 4)
+                        amt = round(alloc_per_level / new_bp, precision)
                         try:
                             new_b = await self.exchange.place_order("buy", new_bp, amt, symbol=sym)
                             self.db.save_order(
@@ -295,7 +404,7 @@ class SpotGridStrategy:
                 can_buy = False
 
             if can_buy:
-                amt = round(alloc_per_level / current_price, 4)
+                amt = round(alloc_per_level / current_price, precision)
                 try:
                     p_order = await self.exchange.place_order("buy", current_price, amt, symbol=sym)
                     self.db.save_order(order_id=p_order["id"], symbol=sym, side="buy", price=current_price, amount=amt, cost_usd=alloc_per_level, status="filled")

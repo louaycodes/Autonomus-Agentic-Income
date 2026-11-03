@@ -43,3 +43,36 @@ async def test_order_fill_and_recycling(test_setup):
     open_sells = db.get_open_orders(side="sell")
     assert len(open_sells) >= 1
     assert any(s["price"] > target_buy["price"] for s in open_sells)
+
+@pytest.mark.asyncio
+async def test_stop_loss_trigger(test_setup):
+    db, exchange, strategy = test_setup
+    step = strategy.current_step_pct
+    entry_buy = round(100.0 / (1.0 + step), 4)
+    amount = 1.0
+    db.save_order("sell_pos_1", "sell", 100.0, amount, 100.0 * amount, "open", symbol="SOL/USDT")
+    exchange.paper_balance_crypto["SOL"] = 1.0
+    exchange.paper_balance_usdt = 50.0
+    exchange._save_paper_state()
+
+    # Price plunging 6% below entry_buy (exceeding 4.0% stop-loss threshold)
+    plunge_price = round(entry_buy * 0.94, 2)
+    async def mock_price(sym=None):
+        return plunge_price
+    async def mock_closes(sym=None, timeframe="1m", limit=50):
+        return [plunge_price] * limit
+
+    exchange.fetch_current_price = mock_price
+    exchange.fetch_historical_closes = mock_closes
+
+    cycles = await strategy.evaluate_tick_for_symbol("SOL/USDT")
+    assert len(cycles) >= 1
+    stop_trade = [c for c in cycles if c["net_profit_usd"] < 0][0]
+    assert stop_trade["sell_price"] == plunge_price
+    assert stop_trade["net_profit_usd"] < 0
+
+    # Sell order was closed by stop-loss
+    open_sells = db.get_open_orders(side="sell", symbol="SOL/USDT")
+    assert not any(s["order_id"] == "sell_pos_1" for s in open_sells)
+    # Recovered USDT back into wallet
+    assert exchange.paper_balance_usdt > 50.0

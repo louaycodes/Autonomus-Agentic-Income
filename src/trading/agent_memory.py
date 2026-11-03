@@ -233,6 +233,37 @@ class AgentCognitionEngine:
             is_cash_depleted = free_usdt < 25.0
             is_stagnant_out_of_range = (price_distance_pct > 1.5) and (len(open_buys) == 0 or is_cash_depleted)
 
+            # Check if asset holds significant dormant crypto inventory in wallet with ZERO open sell orders
+            base = sym.split("/")[0]
+            precision = config.get_amount_precision(sym)
+            if self.exchange.mode == "paper":
+                wallet_crypto = float(self.exchange.paper_balance_crypto.get(base, 0.0))
+            else:
+                bals = await self.exchange.fetch_balances()
+                wallet_crypto = float(bals.get("crypto", {}).get(base, 0.0))
+
+            wallet_val_usd = wallet_crypto * current_price
+            if len(open_sells) == 0 and wallet_val_usd >= 15.0:
+                logger.info(f"🔄 [{sym}] Détection de stock crypto dormant sans ordre ({wallet_crypto} {base} = ${wallet_val_usd:.2f}). Déploiement immédiat d'ordres de vente...")
+                step = float(dyn_params.get("active_grid_step_pct", config.grid_step_percent)) / 100.0
+                t_sell = round(current_price * (1.0 + step), 4)
+                amt_sell = round(wallet_crypto * 0.4, precision)
+                if amt_sell > 0:
+                    try:
+                        s_ord = await self.exchange.place_order("sell", t_sell, amt_sell, symbol=sym)
+                        self.db.save_order(
+                            order_id=s_ord["id"],
+                            symbol=sym,
+                            side="sell",
+                            price=t_sell,
+                            amount=amt_sell,
+                            cost_usd=t_sell * amt_sell,
+                            status="open"
+                        )
+                        logger.info(f"✅ [{sym}] Ordre de vente déployé pour stock dormant : {amt_sell} @ ${t_sell:.2f}")
+                    except Exception as e:
+                        logger.warning(f"Could not place sell for dormant inventory: {e}")
+
             if is_cash_depleted or is_stagnant_out_of_range:
                 # Find distant upper sell orders (> 1.5% above spot)
                 distant_sells = [o for o in open_sells if float(o["price"]) > current_price * 1.015]
@@ -248,13 +279,12 @@ class AgentCognitionEngine:
                 chosen_sell = max(distant_sells, key=lambda o: float(o["amount"]) * float(o["price"]))
                 sell_order_id = chosen_sell["order_id"]
                 sell_amount = float(chosen_sell["amount"])
-                base = sym.split("/")[0]
 
-                # Target to free between $60 and $100 USDT, or 20% of the order
-                target_rebalance_crypto = min(sell_amount * 0.20, max(0.0005, 80.0 / current_price))
-                rebalance_amount = round(target_rebalance_crypto, 4)
+                # Target to free between $60 and $100 USDT, or 25% of the order
+                target_rebalance_crypto = min(sell_amount * 0.25, max(0.0001, 80.0 / current_price))
+                rebalance_amount = round(target_rebalance_crypto, precision)
                 if rebalance_amount <= 0 or rebalance_amount > sell_amount:
-                    rebalance_amount = round(sell_amount * 0.20, 4)
+                    rebalance_amount = round(sell_amount * 0.25, precision)
 
                 if rebalance_amount > 0:
                     self._rebalance_cooldown[sym] = now_ts
@@ -266,107 +296,107 @@ class AgentCognitionEngine:
                     except Exception as e:
                         logger.warning(f"Could not cancel order {sell_order_id} for rebalancing: {e}")
 
-
-                        # Liquidate the fraction to USDT at current spot price
-                        freed_usdt = round(rebalance_amount * current_price * 0.999, 4)
-                        if self.exchange.mode == "paper":
-                            # In paper mode, transfer from crypto to USDT
-                            self.exchange.paper_balance_usdt += freed_usdt
-                            # The remaining crypto returns to wallet, re-post remaining sell order
-                            remaining_amount = round(sell_amount - rebalance_amount, 4)
-                            if remaining_amount > 0:
-                                old_price = float(highest_sell["price"])
-                                try:
-                                    re_sell = await self.exchange.place_order("sell", old_price, remaining_amount, symbol=sym)
-                                    self.db.save_order(
-                                        order_id=re_sell["id"],
-                                        symbol=sym,
-                                        side="sell",
-                                        price=old_price,
-                                        amount=remaining_amount,
-                                        cost_usd=old_price * remaining_amount,
-                                        status="open"
-                                    )
-                                except Exception as e:
-                                    logger.warning(f"Could not restore partial sell: {e}")
-                            self.exchange._save_paper_state()
-
-                        free_usdt += freed_usdt
-                        logger.info(
-                            f"✅ [LIQUIDITÉ LIBÉRÉE] {rebalance_amount} {base} rééquilibré @ ${current_price:.2f} -> "
-                            f"+${freed_usdt:.2f} USDT injectés dans la trésorerie active."
-                        )
-
-                        # Immediately re-anchor active micro-grid at current spot price!
-                        step = float(dyn_params.get("active_grid_step_pct", config.grid_step_percent)) / 100.0
-                        alloc_active = min(free_usdt * 0.45, per_asset_cap * 0.25)
-                        if alloc_active >= 10.0:
-                            seed_amt = round(alloc_active / current_price, 4)
+                    # Liquidate the fraction to USDT at current spot price
+                    freed_usdt = round(rebalance_amount * current_price * 0.999, 4)
+                    if self.exchange.mode == "paper":
+                        # In paper mode, transfer from crypto to USDT
+                        curr_crypto = float(self.exchange.paper_balance_crypto.get(base, 0.0))
+                        self.exchange.paper_balance_crypto[base] = max(0.0, curr_crypto - rebalance_amount)
+                        self.exchange.paper_balance_usdt += freed_usdt
+                        # The remaining crypto returns to wallet, re-post remaining sell order
+                        remaining_amount = round(sell_amount - rebalance_amount, precision)
+                        if remaining_amount > 0:
+                            old_price = float(chosen_sell["price"])
                             try:
-                                # Seed position at spot
-                                new_seed = await self.exchange.place_order("buy", current_price, seed_amt, symbol=sym)
+                                re_sell = await self.exchange.place_order("sell", old_price, remaining_amount, symbol=sym)
                                 self.db.save_order(
-                                    order_id=new_seed["id"],
-                                    symbol=sym,
-                                    side="buy",
-                                    price=current_price,
-                                    amount=seed_amt,
-                                    cost_usd=alloc_active,
-                                    status="filled"
-                                )
-                                if self.exchange.mode == "paper":
-                                    net_seed = seed_amt * (1.0 - self.exchange.paper_fee_rate)
-                                    self.exchange.paper_balance_crypto[base] = self.exchange.paper_balance_crypto.get(base, 0.0) + net_seed
-                                    self.exchange._save_paper_state()
-
-                                # Target sell at +step
-                                target_sell = round(current_price * (1.0 + step), 4)
-                                new_sell = await self.exchange.place_order("sell", target_sell, seed_amt, symbol=sym)
-                                self.db.save_order(
-                                    order_id=new_sell["id"],
+                                    order_id=re_sell["id"],
                                     symbol=sym,
                                     side="sell",
-                                    price=target_sell,
-                                    amount=seed_amt,
-                                    cost_usd=target_sell * seed_amt,
-                                    status="open",
-                                    pair_order_id=new_seed["id"]
-                                )
-
-                                # Active buy level below spot
-                                target_buy = round(current_price * (1.0 - step), 4)
-                                buy_amt = round(alloc_active / target_buy, 4)
-                                new_buy = await self.exchange.place_order("buy", target_buy, buy_amt, symbol=sym)
-                                self.db.save_order(
-                                    order_id=new_buy["id"],
-                                    symbol=sym,
-                                    side="buy",
-                                    price=target_buy,
-                                    amount=buy_amt,
-                                    cost_usd=alloc_active,
+                                    price=old_price,
+                                    amount=remaining_amount,
+                                    cost_usd=old_price * remaining_amount,
                                     status="open"
                                 )
-
-
-                                logger.info(
-                                    f"🚀 [MICRO-GRILLE ACTIVE DÉPLOYÉE] [{sym}] Re-ancrée sur le cours direct (${current_price:.2f}) : "
-                                    f"Achat @ ${target_buy:.2f} / Vente @ ${target_sell:.2f}. TRADING IMMÉDIATEMENT RELANCÉ !"
-                                )
-
-                                self.db.set_agent_memory("last_anti_lock_action", {
-                                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                                    "symbol": sym,
-                                    "freed_usdt": freed_usdt,
-                                    "re_anchored_price": current_price
-                                })
-
-                                return {
-                                    "status": "rebalanced",
-                                    "symbol": sym,
-                                    "freed_usdt": freed_usdt,
-                                    "active_spot": current_price
-                                }
                             except Exception as e:
-                                logger.error(f"Failed to place active re-anchor orders for {sym}: {e}")
+                                logger.warning(f"Could not restore partial sell: {e}")
+                        self.exchange._save_paper_state()
+
+                    free_usdt += freed_usdt
+                    logger.info(
+                        f"✅ [LIQUIDITÉ LIBÉRÉE] {rebalance_amount} {base} rééquilibré @ ${current_price:.2f} -> "
+                        f"+${freed_usdt:.2f} USDT injectés dans la trésorerie active."
+                    )
+
+                    # Immediately re-anchor active micro-grid at current spot price!
+                    step = float(dyn_params.get("active_grid_step_pct", config.grid_step_percent)) / 100.0
+                    alloc_active = min(free_usdt * 0.45, per_asset_cap * 0.25)
+                    if alloc_active >= 10.0:
+                        seed_amt = round(alloc_active / current_price, precision)
+                        try:
+                            # Seed position at spot
+                            new_seed = await self.exchange.place_order("buy", current_price, seed_amt, symbol=sym)
+                            self.db.save_order(
+                                order_id=new_seed["id"],
+                                symbol=sym,
+                                side="buy",
+                                price=current_price,
+                                amount=seed_amt,
+                                cost_usd=alloc_active,
+                                status="filled"
+                            )
+                            if self.exchange.mode == "paper":
+                                net_seed = seed_amt * (1.0 - self.exchange.paper_fee_rate)
+                                self.exchange.paper_balance_crypto[base] = self.exchange.paper_balance_crypto.get(base, 0.0) + net_seed
+                                self.exchange._save_paper_state()
+
+                            # Target sell at +step
+                            target_sell = round(current_price * (1.0 + step), 4)
+                            new_sell = await self.exchange.place_order("sell", target_sell, seed_amt, symbol=sym)
+                            self.db.save_order(
+                                order_id=new_sell["id"],
+                                symbol=sym,
+                                side="sell",
+                                price=target_sell,
+                                amount=seed_amt,
+                                cost_usd=target_sell * seed_amt,
+                                status="open",
+                                pair_order_id=new_seed["id"]
+                            )
+
+                            # Active buy level below spot
+                            target_buy = round(current_price * (1.0 - step), 4)
+                            buy_amt = round(alloc_active / target_buy, precision)
+                            new_buy = await self.exchange.place_order("buy", target_buy, buy_amt, symbol=sym)
+                            self.db.save_order(
+                                order_id=new_buy["id"],
+                                symbol=sym,
+                                side="buy",
+                                price=target_buy,
+                                amount=buy_amt,
+                                cost_usd=alloc_active,
+                                status="open"
+                            )
+
+                            logger.info(
+                                f"🚀 [MICRO-GRILLE ACTIVE DÉPLOYÉE] [{sym}] Re-ancrée sur le cours direct (${current_price:.2f}) : "
+                                f"Achat @ ${target_buy:.2f} / Vente @ ${target_sell:.2f}. TRADING IMMÉDIATEMENT RELANCÉ !"
+                            )
+
+                            self.db.set_agent_memory("last_anti_lock_action", {
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                                "symbol": sym,
+                                "freed_usdt": freed_usdt,
+                                "re_anchored_price": current_price
+                            })
+
+                            return {
+                                "status": "rebalanced",
+                                "symbol": sym,
+                                "freed_usdt": freed_usdt,
+                                "active_spot": current_price
+                            }
+                        except Exception as e:
+                            logger.error(f"Failed to place active re-anchor orders for {sym}: {e}")
 
         return None
