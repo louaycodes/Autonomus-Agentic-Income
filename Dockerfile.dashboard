@@ -1,0 +1,26 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN useradd -m -u 1000 clusteruser && \
+    mkdir -p /app/data && \
+    chown -R clusteruser:clusteruser /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY --chown=clusteruser:clusteruser src/ /app/src/
+
+USER clusteruser
+
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV PORT=8085
+
+EXPOSE 8085
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8085/api/health')" || exit 1
+
+CMD ["python3", "-m", "src.dashboard.app"]
+

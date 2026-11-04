@@ -37,3 +37,31 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: apex-trading-dashboard
+    restart: always
+    depends_on:
+      - trading-agent
+    ports:
+      - "8085:8085"
+    environment:
+      - DATA_DIR=/app/data
+      - DB_NAME=trading.db
+      - DT_RATE=3.10
+      - PORT=8085
+    volumes:
+      - ./data:/app/data
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"

@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="fr" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Apex Trader — Mon Bot en Dinars Tunisiens</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              dark: '#080C14',
+              card: '#111726',
+              cardHover: '#161F33',
+              border: '#1E293B',
+              primary: '#10B981',
+              accent: '#3B82F6',
+              gold: '#F59E0B'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #080C14;
+      color: #F8FAFC;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .pulse-dot {
+      animation: pulse-green 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    @keyframes pulse-green {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.15); }
+    }
+    /* Hide scrollbars but keep functionality */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+</head>
+<body class="min-h-screen pb-12 antialiased selection:bg-emerald-500 selection:text-white">
+
+  <!-- Top Navigation Header -->
+  <header class="sticky top-0 z-50 backdrop-blur-md bg-[#080C14]/85 border-b border-brand-border px-4 py-3 sm:px-6">
+    <div class="max-w-4xl mx-auto flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+          <span class="text-xl font-black text-white">⚡</span>
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <h1 class="text-base font-bold tracking-tight text-white">Apex Trader</h1>
+            <span class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+              Dinar Tunisien (DT)
+            </span>
+          </div>
+          <p class="text-xs text-slate-400">Suivi 100% automatique en direct</p>
+        </div>
+      </div>
+
+      <!-- Live Indicator & Refresh Button -->
+      <div class="flex items-center space-x-2">
+        <div class="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-slate-900/80 border border-slate-800 text-xs text-slate-300">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></span>
+          <span class="text-[11px] font-medium hidden sm:inline" id="syncStatus">En direct</span>
+        </div>
+        <button onclick="refreshData()" class="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 active:scale-95 transition border border-slate-700/60 text-slate-300 hover:text-white" title="Actualiser maintenant">
+          <svg id="refreshIcon" class="w-4 h-4 transition-transform duration-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Container -->
+  <main class="max-w-4xl mx-auto px-4 sm:px-6 pt-5 space-y-5">
+
+    <!-- Reconnecting / Offline Banner -->
+    <div id="errorBanner" class="hidden p-3 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs flex items-center justify-between">
+      <div class="flex items-center space-x-2">
+        <span>⚠️</span>
+        <span>Connexion au bot en cours... Si le bot redémarre, vos données réapparaîtront automatiquement.</span>
+      </div>
+      <button onclick="refreshData()" class="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 rounded-lg font-bold">Réessayer</button>
+    </div>
+
+    <!-- 1. HERO CARD: Ma Cagnotte Totale -->
+    <div class="relative overflow-hidden rounded-3xl bg-gradient-to-b from-[#162136] to-brand-card p-6 border border-slate-800/80 shadow-2xl">
+      <!-- Background subtle glow -->
+      <div class="absolute -right-12 -top-12 w-48 h-48 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+      <div class="flex justify-between items-start">
+        <div>
+          <span class="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+            <span>💼</span> Ma Cagnotte Globale
+          </span>
+          <div class="mt-2 flex items-baseline gap-2">
+            <span class="text-3xl sm:text-4xl font-extrabold tracking-tight text-white" id="totalCapital">
+              --,-- DT
+            </span>
+          </div>
+        </div>
+        <!-- Status Badge -->
+        <div class="flex flex-col items-end">
+          <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 pulse-dot"></span>
+            Actif & Sécurisé
+          </span>
+          <span class="text-[11px] text-slate-400 mt-1">Zéro risque de liquidation</span>
+        </div>
+      </div>
+
+      <!-- Micro Progress / Quick Stats Banner -->
+      <div class="mt-6 pt-5 border-t border-slate-800/80 grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div>
+          <p class="text-[11px] text-slate-400">💵 Monnaie disponible</p>
+          <p class="text-sm sm:text-base font-bold text-slate-200 mt-0.5" id="freeCash">--,-- DT</p>
+        </div>
+        <div>
+          <p class="text-[11px] text-slate-400">🪙 Cryptos au travail</p>
+          <p class="text-sm sm:text-base font-bold text-slate-200 mt-0.5" id="cryptoTotal">--,-- DT</p>
+        </div>
+        <div class="col-span-2 sm:col-span-1">
+          <p class="text-[11px] text-slate-400">🔒 En ordres d'achat</p>
+          <p class="text-sm sm:text-base font-bold text-slate-200 mt-0.5" id="lockedCash">--,-- DT</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. FOUR KEY METRIC TILES -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <!-- Tile 1: Gains Aujourd'hui -->
+      <div class="rounded-2xl bg-brand-card p-4 border border-brand-border/80 shadow-md flex flex-col justify-between">
+        <div>
+          <div class="flex items-center justify-between text-xs text-slate-400">
+            <span>Gains Aujourd'hui</span>
+            <span class="text-emerald-400 font-bold">📈</span>
+          </div>
+          <div class="text-lg sm:text-xl font-black text-emerald-400 mt-1" id="profitToday">
+            +0,00 DT
+          </div>
+        </div>
+        <p class="text-[11px] text-slate-400 mt-2 flex items-center gap-1">
+          <span class="text-emerald-400 font-semibold" id="tradesTodayCount">0</span> vente(s) réussie(s)
+        </p>
+      </div>
+
+      <!-- Tile 2: Gains Totaux Cumulés -->
+      <div class="rounded-2xl bg-brand-card p-4 border border-brand-border/80 shadow-md flex flex-col justify-between">
+        <div>
+          <div class="flex items-center justify-between text-xs text-slate-400">
+            <span>Bénéfices Totaux</span>
+            <span class="text-amber-400 font-bold">🏆</span>
+          </div>
+          <div class="text-lg sm:text-xl font-black text-amber-300 mt-1" id="totalProfit">
+            +0,00 DT
+          </div>
+        </div>
+        <p class="text-[11px] text-slate-400 mt-2">
+          Cumul historique net
+        </p>
+      </div>
+
+      <!-- Tile 3: Taux de Réussite -->
+      <div class="rounded-2xl bg-brand-card p-4 border border-brand-border/80 shadow-md flex flex-col justify-between">
+        <div>
+          <div class="flex items-center justify-between text-xs text-slate-400">
+            <span>Total Opérations</span>
+            <span class="text-sky-400 font-bold">⚡</span>
+          </div>
+          <div class="text-lg sm:text-xl font-black text-white mt-1" id="totalTradesCount">
+            0
+          </div>
+        </div>
+        <p class="text-[11px] text-slate-400 mt-2">
+          Cycles complétés
+        </p>
+      </div>
+
+      <!-- Tile 4: Sécurité & Stop Loss -->
+      <div class="rounded-2xl bg-brand-card p-4 border border-brand-border/80 shadow-md flex flex-col justify-between">
+        <div>
+          <div class="flex items-center justify-between text-xs text-slate-400">
+            <span>Protection Crash</span>
+            <span class="text-teal-400 font-bold">🛡️</span>
+          </div>
+          <div class="text-lg sm:text-xl font-black text-teal-300 mt-1">
+            Active
+          </div>
+        </div>
+        <p class="text-[11px] text-slate-400 mt-2">
+          Stop Loss à 4% armé
+        </p>
+      </div>
+    </div>
+
+    <!-- 3. LES 3 CRYPTOMONNAIES EN TRAVAIL -->
+    <div class="space-y-3">
+      <div class="flex items-center justify-between px-1">
+        <h2 class="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+          <span>🪙</span> Mes 3 Cryptomonnaies en Direct
+        </h2>
+        <span class="text-xs text-slate-400">Mises à jour automatiques</span>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3" id="cryptoCardsContainer">
+        <!-- Will be dynamically populated with Bitcoin, Solana, Ethereum -->
+      </div>
+    </div>
+
+    <!-- 4. GRAPHIQUES SIMPLES (Chart.js) -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <!-- Chart A: Historique des bénéfices en Dinars -->
+      <div class="rounded-2xl bg-brand-card p-5 border border-brand-border/80 shadow-md">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3 class="text-sm font-bold text-white flex items-center gap-1.5">
+              <span>📊</span> Évolution de mes Bénéfices
+            </h3>
+            <p class="text-[11px] text-slate-400">Gains nets par jour (en Dinars Tunisiens)</p>
+          </div>
+        </div>
+        <div class="h-48 relative">
+          <canvas id="profitChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Chart B: Répartition de ma cagnotte -->
+      <div class="rounded-2xl bg-brand-card p-5 border border-brand-border/80 shadow-md">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3 class="text-sm font-bold text-white flex items-center gap-1.5">
+              <span>🥧</span> Répartition de mon Argent
+            </h3>
+            <p class="text-[11px] text-slate-400">Liquidités en réserve vs Cryptos actives</p>
+          </div>
+        </div>
+        <div class="h-48 relative flex items-center justify-center">
+          <canvas id="portfolioChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5. DERNIERS TRADES RÉALISÉS (ENCAISSÉS) -->
+    <div class="rounded-2xl bg-brand-card border border-brand-border/80 shadow-md overflow-hidden">
+      <div class="p-4 sm:p-5 border-b border-brand-border flex items-center justify-between">
+        <div>
+          <h2 class="text-sm font-bold text-white flex items-center gap-2">
+            <span>💰</span> Derniers Gains Encaissés
+          </h2>
+          <p class="text-xs text-slate-400">Chaque ligne correspond à de l'argent réel mis en poche</p>
+        </div>
+        <span class="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 font-medium" id="tradesCountBadge">
+          0 trades
+        </span>
+      </div>
+
+      <!-- Trade List -->
+      <div class="divide-y divide-slate-800/60 max-h-80 overflow-y-auto no-scrollbar" id="recentTradesList">
+        <div class="p-6 text-center text-slate-400 text-sm">
+          Chargement de l'activité du bot...
+        </div>
+      </div>
+    </div>
+
+    <!-- 6. ORDRES PRÉVUS EN ATTENTE (ACHATS ET VENTES) -->
+    <div class="rounded-2xl bg-brand-card border border-brand-border/80 shadow-md overflow-hidden">
+      <div class="p-4 sm:p-5 border-b border-brand-border flex items-center justify-between">
+        <div>
+          <h2 class="text-sm font-bold text-white flex items-center gap-2">
+            <span>⚙️</span> Les Prochains Coups Prévus par le Bot
+          </h2>
+          <p class="text-xs text-slate-400">Le bot attend que le prix touche ces niveaux pour acheter ou revendre</p>
+        </div>
+        <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-800 text-slate-300" id="openOrdersCount">
+          12 ordres
+        </span>
+      </div>
+
+      <!-- Tabs: Ventes prévues / Achats prévus -->
+      <div class="p-3 bg-slate-900/50 flex space-x-2 border-b border-brand-border">
+        <button onclick="switchOrdersTab('sells')" id="tabSellsBtn" class="flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+          🏷️ Ventes à la hausse (+0.5%)
+        </button>
+        <button onclick="switchOrdersTab('buys')" id="tabBuysBtn" class="flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition bg-slate-800/80 text-slate-400 border border-transparent">
+          🛒 Achats à la baisse (Creux)
+        </button>
+      </div>
+
+      <!-- Orders List Container -->
+      <div class="divide-y divide-slate-800/60 max-h-72 overflow-y-auto no-scrollbar p-1" id="ordersListContainer">
+        <!-- Rendered by JS -->
+      </div>
+    </div>
+
+    <!-- Footer Note -->
+    <footer class="pt-6 pb-2 text-center text-xs text-slate-400 border-t border-slate-800/40">
+      <p class="font-medium">Apex Autonomous Agent 24/7 • Interface Personnelle Louay</p>
+      <p class="text-[11px] text-slate-400 mt-1">
+        Toutes les valeurs sont calculées et affichées exclusivement en <strong>Dinars Tunisiens (DT)</strong>.
+      </p>
+    </footer>
+
+  </main>
+
+  <!-- JAVASCRIPT LOGIC -->
+  <script>
+    // State
+    let currentData = null;
+    let profitChartInstance = null;
+    let portfolioChartInstance = null;
+    let activeOrdersTab = 'sells';
+
+    // Formatters: STRICTLY TUNISIAN DINARS (NO DOLLARS EVER)
+    function formatDT(num) {
+      if (num === null || num === undefined || isNaN(num)) return '0,00 DT';
+      return new Intl.NumberFormat('fr-TN', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      }).format(num).replace('TND', '').trim() + ' DT';
+    }
+
+    function formatNumber(num, decimals = 4) {
+      if (num === null || num === undefined || isNaN(num)) return '0';
+      return new Intl.NumberFormat('fr-FR', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+      }).format(num);
+    }
+
+    // Switch between Ventes and Achats in the orders tab
+    function switchOrdersTab(tab) {
+      activeOrdersTab = tab;
+      const tabSellsBtn = document.getElementById('tabSellsBtn');
+      const tabBuysBtn = document.getElementById('tabBuysBtn');
+
+      if (tab === 'sells') {
+        tabSellsBtn.className = "flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition bg-emerald-500/20 text-emerald-300 border border-emerald-500/40";
+        tabBuysBtn.className = "flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition bg-slate-800/80 text-slate-400 border border-transparent";
+      } else {
+        tabBuysBtn.className = "flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition bg-sky-500/20 text-sky-300 border border-sky-500/40";
+        tabSellsBtn.className = "flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition bg-slate-800/80 text-slate-400 border border-transparent";
+      }
+      renderOrdersList();
+    }
+
+    function renderOrdersList() {
+      const container = document.getElementById('ordersListContainer');
+      if (!currentData || !currentData.open_orders) {
+        container.innerHTML = '<div class="p-4 text-center text-xs text-slate-400">Aucun ordre en attente.</div>';
+        return;
+      }
+
+      const list = activeOrdersTab === 'sells' ? currentData.open_orders.sells : currentData.open_orders.buys;
+      if (!list || list.length === 0) {
+        container.innerHTML = `<div class="p-6 text-center text-xs text-slate-400">Aucun ordre de ${activeOrdersTab === 'sells' ? 'vente' : 'achat'} en attente pour le moment.</div>`;
+        return;
+      }
+
+      let html = '';
+      list.forEach(ord => {
+        const isSell = ord.side === 'sell';
+        const badgeColor = isSell ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-sky-500/15 text-sky-400 border-sky-500/30';
+        const actionLabel = isSell ? '🏷️ Vendre dès que le cours atteint' : '🛒 Acheter au creux dès que le cours baisse à';
+
+        html += `
+          <div class="p-3.5 flex items-center justify-between hover:bg-slate-800/40 transition rounded-xl">
+            <div class="flex items-center space-x-3">
+              <span class="w-8 h-8 rounded-lg ${isSell ? 'bg-emerald-500/20 text-emerald-400' : 'bg-sky-500/20 text-sky-400'} flex items-center justify-center font-bold text-xs">
+                ${ord.base}
+              </span>
+              <div>
+                <p class="text-xs text-slate-400">${actionLabel}</p>
+                <p class="text-sm font-bold text-white">${formatDT(ord.price_dt)}</p>
+              </div>
+            </div>
+            <div class="text-right">
+              <span class="inline-block px-2 py-0.5 text-[11px] font-bold rounded-md border ${badgeColor}">
+                Valeur : ${formatDT(ord.total_dt)}
+              </span>
+              <p class="text-[10px] text-slate-400 mt-1">${formatNumber(ord.amount, ord.base === 'BTC' ? 6 : 4)} ${ord.base}</p>
+            </div>
+          </div>
+        `;
+      });
+      container.innerHTML = html;
+    }
+
+    // Render Recent Trades
+    function renderRecentTrades() {
+      const listContainer = document.getElementById('recentTradesList');
+      const trades = currentData.recent_trades || [];
+
+      document.getElementById('tradesCountBadge').textContent = `${trades.length} trade(s) récent(s)`;
+
+      if (trades.length === 0) {
+        listContainer.innerHTML = `
+          <div class="p-8 text-center">
+            <div class="text-3xl mb-2">⏳</div>
+            <p class="text-sm font-bold text-slate-300">Le bot surveille activement le marché</p>
+            <p class="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+              Dès qu'une crypto baisse, le bot achète. Dès qu'elle remonte de 0.5%, il revend et votre gain s'affichera ici en Dinars Tunisiens !
+            </p>
+          </div>
+        `;
+        return;
+      }
+
+      let html = '';
+      trades.forEach(t => {
+        const isPos = t.is_positive;
+        const profitSign = isPos ? '+' : '';
+        const badgeBg = isPos ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20';
+
+        html += `
+          <div class="p-3.5 sm:p-4 flex items-center justify-between hover:bg-slate-800/40 transition">
+            <div class="flex items-center space-x-3">
+              <div class="w-9 h-9 rounded-xl ${isPos ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'} flex items-center justify-center text-base font-bold">
+                ${t.icon}
+              </div>
+              <div>
+                <div class="flex items-center space-x-1.5">
+                  <span class="text-sm font-bold text-white">${t.asset_name}</span>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">${t.symbol}</span>
+                </div>
+                <p class="text-[11px] text-slate-400 mt-0.5">
+                  Acheté à ${formatDT(t.buy_price_dt)} ➔ Revendu à ${formatDT(t.sell_price_dt)}
+                </p>
+              </div>
+            </div>
+
+            <div class="text-right">
+              <span class="text-sm sm:text-base font-extrabold ${isPos ? 'text-emerald-400' : 'text-rose-400'}">
+                ${profitSign}${formatDT(t.profit_dt)}
+              </span>
+              <div class="flex items-center justify-end space-x-1 text-[11px] text-slate-400 mt-0.5">
+                <span class="px-1.5 py-0.5 rounded font-bold text-[10px] border ${badgeBg}">
+                  ${profitSign}${Number(t.roi_percent).toFixed(2)}%
+                </span>
+                <span>• ${t.formatted_time}</span>
+              </div>
+            </div>
+          </div>
+        `;
+      });
+      listContainer.innerHTML = html;
+    }
+
+    // Render Crypto Cards
+    function renderCryptoCards() {
+      const container = document.getElementById('cryptoCardsContainer');
+      const assets = currentData.crypto_assets || [];
+      let html = '';
+
+      assets.forEach(a => {
+        html += `
+          <div class="rounded-2xl bg-brand-card p-4 border border-brand-border/80 shadow-md hover:border-slate-700 transition">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center space-x-2.5">
+                <span class="w-8 h-8 rounded-xl flex items-center justify-center font-bold text-sm" style="background-color: ${a.color}20; color: ${a.color}">
+                  ${a.icon}
+                </span>
+                <div>
+                  <h3 class="text-sm font-bold text-white">${a.name}</h3>
+                  <p class="text-[10px] text-slate-400">1 ${a.symbol} = ${formatDT(a.price_dt)}</p>
+                </div>
+              </div>
+              <span class="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">En grille</span>
+            </div>
+
+            <div class="mt-4 pt-3 border-t border-slate-800/80 flex justify-between items-baseline">
+              <div>
+                <p class="text-[10px] text-slate-400">Mon Stock</p>
+                <p class="text-xs font-semibold text-slate-300 mt-0.5">${a.amount} ${a.symbol}</p>
+              </div>
+              <div class="text-right">
+                <p class="text-[10px] text-slate-400">Valeur en Dinars</p>
+                <p class="text-sm font-black text-white mt-0.5">${formatDT(a.value_dt)}</p>
+              </div>
+            </div>
+          </div>
+        `;
+      });
+      container.innerHTML = html;
+    }
+
+    // Render Charts
+    function updateCharts() {
+      // 1. Profit Bar Chart
+      const chartLabels = currentData.daily_chart ? currentData.daily_chart.labels : [];
+      const chartValues = currentData.daily_chart ? currentData.daily_chart.values : [];
+
+      const ctxProfit = document.getElementById('profitChart').getContext('2d');
+      if (profitChartInstance) {
+        profitChartInstance.data.labels = chartLabels;
+        profitChartInstance.data.datasets[0].data = chartValues;
+        profitChartInstance.update();
+      } else {
+        profitChartInstance = new Chart(ctxProfit, {
+          type: 'bar',
+          data: {
+            labels: chartLabels,
+            datasets: [{
+              label: 'Bénéfice Net (DT)',
+              data: chartValues,
+              backgroundColor: '#10B981',
+              borderRadius: 6,
+              hoverBackgroundColor: '#34D399'
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  label: function(context) {
+                    return context.parsed.y.toFixed(2) + ' DT';
+                  }
+                }
+              }
+            },
+            scales: {
+              x: {
+                grid: { display: false },
+                ticks: { color: '#64748B', font: { size: 10 } }
+              },
+              y: {
+                grid: { color: '#1E293B' },
+                ticks: {
+                  color: '#64748B',
+                  font: { size: 10 },
+                  callback: function(value) { return value + ' DT'; }
+                }
+              }
+            }
+          }
+        });
+      }
+
+      // 2. Portfolio Donut Chart
+      const p = currentData.portfolio;
+      const donutLabels = ['Monnaie Libre (DT)', 'Ordres Achat (DT)', 'Cryptos (DT)'];
+      const donutData = [p.free_cash_dt, p.locked_cash_dt, p.crypto_total_dt];
+
+      const ctxPort = document.getElementById('portfolioChart').getContext('2d');
+      if (portfolioChartInstance) {
+        portfolioChartInstance.data.datasets[0].data = donutData;
+        portfolioChartInstance.update();
+      } else {
+        portfolioChartInstance = new Chart(ctxPort, {
+          type: 'doughnut',
+          data: {
+            labels: donutLabels,
+            datasets: [{
+              data: donutData,
+              backgroundColor: ['#10B981', '#3B82F6', '#F59E0B'],
+              borderWidth: 2,
+              borderColor: '#111726'
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '72%',
+            plugins: {
+              legend: {
+                position: 'bottom',
+                labels: { color: '#94A3B8', boxWidth: 12, font: { size: 11 } }
+              },
+              tooltip: {
+                callbacks: {
+                  label: function(context) {
+                    return context.label + ': ' + context.parsed.toFixed(2) + ' DT';
+                  }
+                }
+              }
+            }
+          }
+        });
+      }
+    }
+
+    // Main update function
+    async function refreshData() {
+      const refreshIcon = document.getElementById('refreshIcon');
+      refreshIcon.classList.add('rotate-180');
+
+      try {
+        const resp = await fetch('/api/status');
+        if (!resp.ok) throw new Error('API non joignable');
+        const data = await resp.json();
+        currentData = data;
+
+        // Populate Top KPIs
+        document.getElementById('totalCapital').textContent = formatDT(data.portfolio.total_dt);
+        document.getElementById('freeCash').textContent = formatDT(data.portfolio.free_cash_dt);
+        document.getElementById('cryptoTotal').textContent = formatDT(data.portfolio.crypto_total_dt);
+        document.getElementById('lockedCash').textContent = formatDT(data.portfolio.locked_cash_dt);
+
+        const pToday = data.performance.profit_today_dt;
+        const sign = pToday >= 0 ? '+' : '';
+        document.getElementById('profitToday').textContent = `${sign}${formatDT(pToday)}`;
+        document.getElementById('profitToday').className = `text-lg sm:text-xl font-black ${pToday >= 0 ? 'text-emerald-400' : 'text-rose-400'} mt-1`;
+
+        document.getElementById('tradesTodayCount').textContent = data.performance.trades_today_count;
+        document.getElementById('totalProfit').textContent = `+${formatDT(data.performance.total_profit_dt)}`;
+        document.getElementById('totalTradesCount').textContent = data.performance.total_trades_count;
+
+        document.getElementById('openOrdersCount').textContent = `${data.open_orders.total_count} ordres actifs`;
+
+        // Render sections
+        renderCryptoCards();
+        renderRecentTrades();
+        renderOrdersList();
+        updateCharts();
+
+        document.getElementById('syncStatus').textContent = "En direct";
+        const errBanner = document.getElementById('errorBanner');
+        if (errBanner) errBanner.classList.add('hidden');
+      } catch (err) {
+        console.error('Fetch error:', err);
+        document.getElementById('syncStatus').textContent = "Reconnexion...";
+        const errBanner = document.getElementById('errorBanner');
+        if (errBanner) errBanner.classList.remove('hidden');
+      } finally {
+        setTimeout(() => refreshIcon.classList.remove('rotate-180'), 500);
+        setTimeout(refreshData, 3500);
+      }
+    }
+
+    // Start live updates
+    document.addEventListener('DOMContentLoaded', () => {
+      refreshData();
+    });
+  </script>
+</body>
+</html>
+
