@@ -316,6 +316,7 @@ async def get_dashboard_status() -> Dict[str, Any]:
 
 
 @app.get("/", response_class=HTMLResponse)
+@app.head("/")
 async def serve_dashboard():
     """Serves the single-page responsive mobile dashboard."""
     index_file = TEMPLATES_DIR / "index.html"
